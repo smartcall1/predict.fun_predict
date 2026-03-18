@@ -172,7 +172,7 @@ class AdvancedPortfolioOptimizer:
                 # Update the opportunity object in place
                 opp.kelly_fraction = kelly_val
                 opp.fractional_kelly = kelly_val * 0.5  # Conservative Kelly
-                opp.risk_adjusted_fraction = final_kelly
+                opp.risk_adjusted_fraction = opp.fractional_kelly
             
             # Step 4: Apply correlation adjustments
             correlation_matrix = await self._estimate_correlation_matrix(enhanced_opportunities)

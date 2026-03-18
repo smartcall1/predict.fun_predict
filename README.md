@@ -63,7 +63,7 @@ python cli.py dashboard
 ## ✅ Features
 
 ### Multi-Model AI Ensemble
-- ✅ **Five frontier LLMs** collaborate on every decision — Grok-beta, Claude 3.5 Sonnet, GPT-4o, Gemini Flash 1.5, DeepSeek R1
+- ✅ **Five frontier LLMs** collaborate on every decision — Grok-3, Claude 3.5 Sonnet, GPT-4o, Gemini Flash 1.5, DeepSeek R1
 - ✅ **Role-based specialization** — each model plays a distinct analytical role (forecaster, bull, bear, risk manager, news analyst)
 - ✅ **Consensus gating** — positions are skipped when models diverge beyond a configurable confidence threshold
 - ✅ **Deterministic outputs** — temperature=0 for reproducible AI reasoning
@@ -125,7 +125,7 @@ Each of the five models analyzes the incoming data from its assigned perspective
 
 | Model | Role | Weight |
 |---|---|---|
-| Grok-beta (xAI) | Lead Forecaster | 30% |
+| Grok-3 (xAI) | Lead Forecaster | 30% |
 | Claude 3.5 Sonnet (OpenRouter) | News Analyst | 20% |
 | GPT-4o (OpenRouter) | Bull Researcher | 20% |
 | Gemini Flash 1.5 (OpenRouter) | Bear Researcher | 15% |
@@ -314,6 +314,8 @@ daily_ai_cost_limit    = 50.0    # Max daily AI API spend (USD)
 ```
 
 The ensemble configuration (model roster, weights, debate settings) lives in `EnsembleConfig` in the same file.
+
+> **⚠️ AI Model Names** — xAI periodically renames Grok models. The default is currently set to `grok-3`. If you see a `model not found` error, update `primary_model` in `TradingConfig` and the `"grok-3"` key in `EnsembleConfig.models` to match the latest model name from [console.x.ai](https://console.x.ai/). You can also override via environment variable: set `PRIMARY_MODEL=grok-3-mini` (or any valid model ID) in your `.env` file.
 
 ---
 

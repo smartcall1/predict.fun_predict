@@ -30,7 +30,7 @@ class EnsembleConfig:
     enabled: bool = True
     # Model roster for ensemble decisions
     models: Dict[str, Dict] = field(default_factory=lambda: {
-        "grok-beta": {"provider": "xai", "role": "forecaster", "weight": 0.30},
+        "grok-3": {"provider": "xai", "role": "forecaster", "weight": 0.30},
         "anthropic/claude-3.5-sonnet": {"provider": "openrouter", "role": "news_analyst", "weight": 0.20},
         "openai/gpt-4o": {"provider": "openrouter", "role": "bull_researcher", "weight": 0.20},
         "google/gemini-flash-1.5": {"provider": "openrouter", "role": "bear_researcher", "weight": 0.15},
@@ -94,7 +94,7 @@ class TradingConfig:
     scan_interval_seconds: int = 60      # SANE: 60-second scan interval (was 30)
     
     # AI model configuration
-    primary_model: str = "grok-beta"  # xAI Grok model for forecasting
+    primary_model: str = "grok-3"  # xAI Grok model for forecasting
     fallback_model: str = "grok-4-1-fast-non-reasoning"  # Fallback to fast non-reasoning variant
     ai_temperature: float = 0  # Lower temperature for more consistent JSON output
     ai_max_tokens: int = 8000    # Reasonable limit for reasoning models (grok-4 works better with 8000)
