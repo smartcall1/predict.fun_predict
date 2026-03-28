@@ -45,7 +45,7 @@ class TradingConfig:
     min_balance: float = 50.0               # 최소 잔고
 
     # Market filtering
-    min_volume: float = 200.0               # 최소 거래량
+    min_volume: float = 0.0                 # Predict.fun API는 목록에서 volume 미제공 → 0으로 설정
     max_time_to_expiry_days: int = 30       # 최대 만기일
 
     # AI decision thresholds
@@ -89,7 +89,7 @@ class TradingConfig:
     sleep_when_limit_reached: bool = True
 
     # Enhanced filtering
-    min_volume_for_ai_analysis: float = 100.0
+    min_volume_for_ai_analysis: float = 0.0
     exclude_low_liquidity_categories: List[str] = field(default_factory=lambda: [])
 
     # News/sentiment (Gemini handles inline — no separate search needed)
