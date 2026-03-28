@@ -173,7 +173,7 @@ async def make_decision_for_market(
 
         # Get real-time portfolio balance
         balance_response = await kalshi_client.get_balance()
-        available_balance = balance_response.get("balance", 0) / 100  # Convert cents to dollars
+        available_balance = float(balance_response.get("balance", 0))  # Predict.fun: already in USDT
         portfolio_data = {"available_balance": available_balance}
         
         logger.info(f"Current available balance: ${available_balance:.2f}")

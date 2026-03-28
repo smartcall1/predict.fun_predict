@@ -1,3 +1,7 @@
+# OMC / Claude state
+.omc/
+.claude/
+
 # Environment variables and secrets
 .env
 .env.local

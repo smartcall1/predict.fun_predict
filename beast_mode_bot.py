@@ -113,11 +113,11 @@ class BeastModeBot:
             kalshi_client = KalshiClient()
             xai_client = XAIClient(db_manager=db_manager)  # Pass db_manager for LLM logging
 
-            # Initialize multi-model router (wraps xAI + OpenRouter)
+            # Initialize model router (Gemini Flash single-model)
             self.model_router = ModelRouter(xai_client=xai_client, db_manager=db_manager)
             self.logger.info(
-                "ModelRouter initialized for multi-model ensemble",
-                ensemble_enabled=settings.ensemble.enabled,
+                "ModelRouter initialized (Gemini Flash)",
+                model=settings.api.gemini_model,
             )
             
             # Small delay to ensure everything is ready

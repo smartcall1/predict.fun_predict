@@ -224,9 +224,9 @@ async def place_profit_taking_orders(
                 
                 # Get current price based on position side
                 if position.side == "YES":
-                    current_price = market_data.get('yes_price', 0) / 100  # Convert cents to dollars
+                    current_price = float(market_data.get('yes_price', 0))  # Predict.fun: already 0-1
                 else:
-                    current_price = market_data.get('no_price', 0) / 100
+                    current_price = float(market_data.get('no_price', 0))
                 
                 # Calculate current profit
                 if current_price > 0:

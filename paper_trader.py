@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Paper Trader — Signal-only mode for the Kalshi AI Trading Bot.
+Paper Trader — Signal-only mode for the Predict.fun AI Trading Bot.
 
-Uses the same market scanning and AI analysis as the live bot, but instead of
-placing real orders it logs every signal to SQLite.  A companion HTML dashboard
-shows cumulative P&L, win rate, and individual signals.
+Uses the same market scanning and Gemini Flash analysis as the live bot,
+but instead of placing real orders it logs every signal to SQLite.
+A companion HTML dashboard shows cumulative P&L, win rate, and individual signals.
 
 Usage:
     python paper_trader.py                # Scan once, log signals, generate dashboard
@@ -42,19 +42,23 @@ DASHBOARD_OUT = os.path.join(os.path.dirname(__file__), "docs", "paper_dashboard
 
 async def scan_and_log():
     """
-    Scan markets via the existing ingest pipeline, run ensemble decisions,
+    Scan markets via the Predict.fun ingest pipeline, run Gemini Flash decisions,
     and log any actionable signals to the paper-trading database.
     """
-    from src.clients.kalshi_client import KalshiClient
-    from src.clients.xai_client import XAIClient
+    from src.clients.kalshi_client import KalshiClient   # → PredictFunClient
+    from src.clients.xai_client import XAIClient          # → GeminiClient
     from src.utils.database import DatabaseManager
     from src.jobs.ingest import run_ingestion
     from src.jobs.decide import make_decision_for_market
 
-    logger.info("📡 Scanning markets for paper trading signals…")
+    from src.utils.telegram import TelegramNotifier
+    tg = TelegramNotifier()
 
-    kalshi = KalshiClient()
+    logger.info("📡 Scanning Predict.fun markets for paper trading signals…")
+
+    client = KalshiClient()
     db = DatabaseManager()
+    await db.initialize()
     xai = XAIClient(db_manager=db)
 
     # 1. Ingest fresh market data
@@ -62,69 +66,88 @@ async def scan_and_log():
         market_queue: asyncio.Queue = asyncio.Queue()
         await run_ingestion(db, market_queue)
 
-        # Drain the queue to collect ingested markets
+        # Drain the queue to collect ingested Market objects
         markets = []
         while not market_queue.empty():
             markets.append(market_queue.get_nowait())
 
         if not markets:
             logger.info("No markets returned from ingestion.")
+            await client.close()
             return 0
     except Exception as e:
         logger.error(f"Ingestion failed: {e}")
+        await client.close()
         return 0
 
     signals_logged = 0
 
-    # 2. Run decision on each market
+    # 2. Run Gemini decision on each market
     for market in markets:
         try:
-            market_id = market.get("ticker") or market.get("market_id", "")
-            title = market.get("title", market_id)
-
-            decision = await make_decision_for_market(
-                market_data=market,
-                kalshi_client=kalshi,
-                xai_client=xai,
+            # make_decision_for_market expects: Market, DatabaseManager, XAIClient, KalshiClient
+            position = await make_decision_for_market(
+                market=market,
                 db_manager=db,
+                xai_client=xai,
+                kalshi_client=client,
             )
 
-            if decision is None:
+            if position is None:
                 continue
 
-            action = decision.get("action", "skip")
-            if action in ("skip", "hold", None):
-                continue
+            # position is a Position dataclass, not a dict
+            action = position.status if hasattr(position, 'status') else "open"
+            side = position.side
+            confidence = position.confidence or 0
+            entry_price = position.entry_price
+            rationale = position.rationale or ""
 
-            side = decision.get("side", "NO")
-            confidence = decision.get("confidence", 0)
-            limit_price = decision.get("limit_price", market.get("no_ask", 0))
-            reasoning = decision.get("reasoning", "")
-
-            # Only log signals with meaningful confidence edge
-            if confidence < 0.55:
+            # Only log signals with meaningful confidence
+            if confidence < settings.trading.min_confidence_to_trade:
                 continue
 
             signal_id = log_signal(
-                market_id=market_id,
-                market_title=title,
+                market_id=market.market_id,
+                market_title=market.title,
                 side=side,
-                entry_price=limit_price,
+                entry_price=entry_price,
                 confidence=confidence,
-                reasoning=reasoning,
-                strategy=decision.get("strategy", "directional"),
+                reasoning=rationale,
+                strategy=position.strategy or "directional",
             )
             signals_logged += 1
             logger.info(
-                f"📝 Signal #{signal_id}: {side} {title} @ {limit_price:.0%} "
-                f"(conf={confidence:.0%}) — {reasoning[:60]}"
+                f"📝 Signal #{signal_id}: {side} {market.title[:60]} @ {entry_price:.2f} "
+                f"(conf={confidence:.0%}) — {rationale[:60]}"
+            )
+
+            # Telegram notification
+            edge = confidence - entry_price if side.upper() == "YES" else confidence - (1 - entry_price)
+            tg.notify_signal(
+                market_title=market.title,
+                side=side,
+                entry_price=entry_price,
+                confidence=confidence,
+                reasoning=rationale,
+                edge=edge,
             )
 
         except Exception as e:
-            logger.warning(f"Decision failed for market: {e}")
+            logger.warning(f"Decision failed for market {getattr(market, 'market_id', '?')}: {e}")
             continue
 
+    await client.close()
+    await xai.close()
     logger.info(f"✅ Logged {signals_logged} paper signals")
+
+    # Telegram: scan complete summary
+    tg.notify_scan_complete(
+        signals=signals_logged,
+        skipped=len(markets) - signals_logged,
+        ai_cost=xai.total_cost,
+    )
+
     return signals_logged
 
 
@@ -133,43 +156,70 @@ async def scan_and_log():
 # ---------------------------------------------------------------------------
 
 async def check_settlements():
-    """Check Kalshi for settled markets and update signal outcomes."""
-    from src.clients.kalshi_client import KalshiClient
+    """Check Predict.fun for settled markets and update signal outcomes."""
+    from src.clients.kalshi_client import KalshiClient  # → PredictFunClient
+    from src.utils.telegram import TelegramNotifier
+    tg = TelegramNotifier()
 
     pending = get_pending_signals()
     if not pending:
         logger.info("No pending signals to settle.")
         return 0
 
-    kalshi = KalshiClient()
+    client = KalshiClient()
     settled_count = 0
 
     for sig in pending:
         try:
-            market = await kalshi.get_market(sig["market_id"])
-            if not market:
+            response = await client.get_market(ticker=sig["market_id"])
+            market_data = response.get("market", {}) if isinstance(response, dict) else {}
+
+            if not market_data:
                 continue
 
-            status = market.get("status", "")
-            result = market.get("result", "")
+            status = str(market_data.get("status", "")).upper()
 
-            if status not in ("settled", "finalized", "closed"):
+            if status not in ("CLOSED", "RESOLVED", "SETTLED", "FINALIZED"):
                 continue
 
-            # result is typically "yes" or "no"
-            settlement_price = 1.0 if result.lower() == "yes" else 0.0
+            # Determine settlement price from market result
+            result = str(market_data.get("result", "")).upper()
+            if result in ("YES", "UP", "ABOVE", "TRUE"):
+                settlement_price = 1.0
+            elif result in ("NO", "DOWN", "BELOW", "FALSE"):
+                settlement_price = 0.0
+            else:
+                # Try to infer from final price
+                final_price = market_data.get("lastPrice") or market_data.get("last_price")
+                if final_price is not None:
+                    settlement_price = 1.0 if float(final_price) >= 0.5 else 0.0
+                else:
+                    continue  # Can't determine outcome
 
             settle_signal(sig["id"], settlement_price)
             outcome = "WIN" if (
-                (sig["side"] == "NO" and settlement_price <= 0.5) or
-                (sig["side"] == "YES" and settlement_price >= 0.5)
+                (sig["side"].upper() == "NO" and settlement_price <= 0.5) or
+                (sig["side"].upper() == "YES" and settlement_price >= 0.5)
             ) else "LOSS"
             logger.info(f"🏁 Signal #{sig['id']} settled: {outcome} — {sig['market_title']}")
             settled_count += 1
 
+            # Telegram: settlement notification
+            entry = sig.get("entry_price", 0)
+            pnl = (settlement_price - entry) if sig["side"].upper() == "YES" else (entry - settlement_price)
+            tg.notify_settlement(
+                market_title=sig.get("market_title", "Unknown"),
+                side=sig["side"],
+                entry_price=entry,
+                exit_price=settlement_price,
+                pnl=pnl,
+                result=outcome,
+            )
+
         except Exception as e:
             logger.warning(f"Settlement check failed for {sig['market_id']}: {e}")
 
+    await client.close()
     logger.info(f"✅ Settled {settled_count}/{len(pending)} pending signals")
     return settled_count
 
@@ -180,8 +230,8 @@ async def check_settlements():
 
 def print_stats():
     stats = get_stats()
-    print("\n📊 Paper Trading Stats")
-    print("=" * 40)
+    print("\n📊 Predict.fun AI Paper Trading Stats")
+    print("=" * 45)
     print(f"  Total signals:  {stats['total_signals']}")
     print(f"  Settled:        {stats['settled']}")
     print(f"  Pending:        {stats['pending']}")
@@ -196,7 +246,7 @@ def print_stats():
 
 
 async def main():
-    parser = argparse.ArgumentParser(description="Paper Trader — Kalshi AI signal logger")
+    parser = argparse.ArgumentParser(description="Paper Trader — Predict.fun AI signal logger")
     parser.add_argument("--settle", action="store_true", help="Check settled markets")
     parser.add_argument("--dashboard", action="store_true", help="Regenerate HTML dashboard only")
     parser.add_argument("--stats", action="store_true", help="Print stats to terminal")
@@ -211,12 +261,14 @@ async def main():
         return
 
     if args.dashboard:
+        os.makedirs(os.path.dirname(DASHBOARD_OUT), exist_ok=True)
         generate_html(DASHBOARD_OUT)
         print(f"✅ Dashboard generated: {DASHBOARD_OUT}")
         return
 
     if args.settle:
         await check_settlements()
+        os.makedirs(os.path.dirname(DASHBOARD_OUT), exist_ok=True)
         generate_html(DASHBOARD_OUT)
         print(f"✅ Dashboard updated: {DASHBOARD_OUT}")
         return
@@ -225,6 +277,7 @@ async def main():
     while True:
         await scan_and_log()
         await check_settlements()
+        os.makedirs(os.path.dirname(DASHBOARD_OUT), exist_ok=True)
         generate_html(DASHBOARD_OUT)
         logger.info(f"📊 Dashboard updated: {DASHBOARD_OUT}")
 

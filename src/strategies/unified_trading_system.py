@@ -160,11 +160,10 @@ class UnifiedAdvancedTradingSystem:
         try:
             # Get total portfolio value (cash + current positions)
             balance_response = await self.kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100  # Convert cents to dollars
+            available_cash = float(balance_response.get('balance', 0))  # Predict.fun: already USDT
 
             # Get current positions to calculate total portfolio value
-            # Kalshi API v2 returns portfolio_value in balance response (in cents)
-            total_position_value = balance_response.get('portfolio_value', 0) / 100  # Convert cents to dollars
+            total_position_value = float(balance_response.get('portfolio_value', 0))
 
             # Also log active positions for visibility
             positions_response = await self.kalshi_client.get_positions()
