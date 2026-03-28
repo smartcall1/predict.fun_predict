@@ -192,8 +192,12 @@ async def process_and_queue_markets(
         from src.clients.kalshi_client import KalshiClient
         stats_client = KalshiClient()
         eligible_markets = []
+        checked = 0
 
         for m in category_filtered:
+            checked += 1
+            if checked % 50 == 0:
+                print(f"[STATS] Checking volume... {checked}/{len(category_filtered)} ({len(eligible_markets)} eligible)")
             try:
                 stats = await stats_client.get_market_stats(m.market_id)
                 if stats:
@@ -217,10 +221,7 @@ async def process_and_queue_markets(
 
         await stats_client.close()
 
-        logger.info(
-            f"Found {len(eligible_markets)} eligible markets "
-            f"(from {len(category_filtered)} category-filtered, min_vol=${settings.trading.min_volume})."
-        )
+        print(f"[STATS] Done. {len(eligible_markets)} eligible (vol>=${settings.trading.min_volume}) from {len(category_filtered)} checked")
         for market in eligible_markets:
             await queue.put(market)
     else:
@@ -254,7 +255,7 @@ async def run_ingestion(
             else:
                 logger.warning(f"Market not found: {market_ticker}")
         else:
-            logger.info("Fetching all open markets from Predict.fun API (cursor pagination).")
+            print("[FETCH] Fetching markets from Predict.fun...")
             cursor = None
             page_size = 20  # Predict.fun max per page
             total_fetched = 0
@@ -269,7 +270,8 @@ async def run_ingestion(
                     break
 
                 total_fetched += len(markets_page)
-                logger.info(f"Fetched page: {len(markets_page)} markets, total={total_fetched}")
+                if total_fetched % 100 == 0 or total_fetched <= 20:
+                    print(f"[FETCH] {total_fetched} markets collected...")
 
                 await process_and_queue_markets(
                     markets_page, db_manager, queue, existing_position_market_ids, logger,
