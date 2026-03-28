@@ -39,15 +39,16 @@ def setup_logging(log_level: str = "INFO") -> None:
 
     # Silence noisy loggers
     logging.getLogger("httpx").setLevel(logging.WARNING)
+    logging.getLogger("httpcore").setLevel(logging.WARNING)
+    logging.getLogger("urllib3").setLevel(logging.WARNING)
 
-    # Configure structlog for human-readable output
+    # Configure structlog — clean, minimal output
     structlog.configure(
         processors=[
             structlog.stdlib.filter_by_level,
-            structlog.stdlib.add_logger_name,
             structlog.stdlib.add_log_level,
             structlog.stdlib.PositionalArgumentsFormatter(),
-            structlog.processors.TimeStamper(fmt="%Y-%m-%d %H:%M:%S", utc=False),
+            structlog.processors.TimeStamper(fmt="%H:%M:%S", utc=False),
             structlog.processors.StackInfoRenderer(),
             structlog.processors.format_exc_info,
             structlog.processors.UnicodeDecoder(),
@@ -58,16 +59,21 @@ def setup_logging(log_level: str = "INFO") -> None:
         wrapper_class=structlog.stdlib.BoundLogger,
         cache_logger_on_first_use=True,
     )
-    
-    # Configure standard library logging
+
+    # Console: clean short format. File: full detail.
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter("%(message)s"))
+    console_handler.setLevel(getattr(logging, log_level.upper()))
+
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+
+    latest_handler = logging.FileHandler(latest_log, mode='w')
+    latest_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s", datefmt="%H:%M:%S"))
+
     logging.basicConfig(
-        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         level=getattr(logging, log_level.upper()),
-        handlers=[
-            logging.FileHandler(log_file),
-            logging.FileHandler(latest_log, mode='w'),
-            logging.StreamHandler(sys.stdout),
-        ],
+        handlers=[file_handler, latest_handler, console_handler],
     )
     
     # Log startup message
