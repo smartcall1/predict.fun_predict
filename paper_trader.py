@@ -177,13 +177,16 @@ async def check_settlements():
             if not market_data:
                 continue
 
-            status = str(market_data.get("status", "")).upper()
+            # Predict.fun: tradingStatus=CLOSED + status=RESOLVED for settled markets
+            trading_status = str(market_data.get("tradingStatus", "")).upper()
+            reg_status = str(market_data.get("status", "")).upper()
+            status = trading_status or reg_status
 
             if status not in ("CLOSED", "RESOLVED", "SETTLED", "FINALIZED"):
                 continue
 
             # Determine settlement price from market result
-            result = str(market_data.get("result", "")).upper()
+            result = str(market_data.get("resolution") or market_data.get("result", "")).upper()
             if result in ("YES", "UP", "ABOVE", "TRUE"):
                 settlement_price = 1.0
             elif result in ("NO", "DOWN", "BELOW", "FALSE"):

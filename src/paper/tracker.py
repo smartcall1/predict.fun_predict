@@ -122,7 +122,7 @@ def settle_signal(signal_id: int, settlement_price: float):
     side = row["side"]
     entry = row["entry_price"]
 
-    if side == "NO":
+    if side.upper() == "NO":
         # settlement_price is the YES settlement (1.0 if YES wins, 0.0 if NO wins)
         if settlement_price <= 0.5:
             # NO wins

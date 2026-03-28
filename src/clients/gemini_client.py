@@ -26,6 +26,7 @@ class TradingDecision:
     side: str            # "yes", "no"
     confidence: float    # 0.0 to 1.0
     limit_price: Optional[int] = None  # cents (0-99)
+    reasoning: Optional[str] = None    # AI 분석 근거
 
 
 @dataclass
@@ -214,8 +215,12 @@ class GeminiClient(TradingLoggerMixin):
             return TradingDecision(action="hold", side="yes", confidence=0.0)
 
         try:
+            import asyncio
             t0 = time.time()
-            response = self._model.generate_content(prompt)
+            response = await asyncio.wait_for(
+                asyncio.to_thread(self._model.generate_content, prompt),
+                timeout=30.0,
+            )
             elapsed = time.time() - t0
 
             # Cost tracking
@@ -271,6 +276,7 @@ class GeminiClient(TradingLoggerMixin):
                 side=td_side,
                 confidence=confidence,
                 limit_price=limit_price,
+                reasoning=reasoning,
             )
 
         except json.JSONDecodeError as e:

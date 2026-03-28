@@ -16,6 +16,9 @@ from src.clients.xai_client import XAIClient
 from src.clients.kalshi_client import KalshiClient
 from src.clients.model_router import ModelRouter
 
+# Module-level logger for helper functions (estimate_market_volatility, etc.)
+logger = get_trading_logger("decision_engine")
+
 
 def _calculate_dynamic_quantity(
     balance: float,
@@ -601,7 +604,7 @@ def estimate_market_volatility(market: Market) -> float:
     """
     try:
         # Get current price to estimate volatility
-        current_price = getattr(market, 'yes_price', 50) / 100  # Convert to 0-1
+        current_price = getattr(market, 'yes_price', 0.5)  # Already 0-1 from Predict.fun
         
         # Binary option volatility formula
         intrinsic_vol = math.sqrt(current_price * (1 - current_price))
