@@ -140,7 +140,7 @@ class GeminiClient(TradingLoggerMixin):
                 generation_config={
                     "temperature": settings.trading.ai_temperature,
                     "top_p": 0.95,
-                    "max_output_tokens": 4096,  # 5-agent debate needs more tokens
+                    "max_output_tokens": 8192,  # 5-agent debate needs room for reasoning + JSON
                 },
             )
         except Exception as e:
@@ -277,33 +277,57 @@ class GeminiClient(TradingLoggerMixin):
             except json.JSONDecodeError:
                 pass
 
-            # Method 2: Extract JSON from ```json ... ``` block
+            # Method 2: Extract LAST ```json ... ``` block (Trader's final decision)
             if result is None:
                 import re
-                json_match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
-                if json_match:
+                json_blocks = re.findall(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+                for block in reversed(json_blocks):  # Last block = Trader's decision
                     try:
-                        result = json.loads(json_match.group(1))
+                        result = json.loads(block)
+                        break
                     except json.JSONDecodeError:
-                        pass
+                        continue
 
-            # Method 3: Find first { ... } block
+            # Method 3: Find LAST { ... } block with "action" key (Trader's output)
             if result is None:
                 import re
-                json_match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
-                if json_match:
+                json_matches = re.findall(r'\{[^{}]*"action"[^{}]*\}', text, re.DOTALL)
+                for match in reversed(json_matches):
                     try:
-                        result = json.loads(json_match.group(0))
+                        result = json.loads(match)
+                        break
                     except json.JSONDecodeError:
-                        pass
+                        continue
 
-            # Method 4: json-repair as last resort
+            # Method 3b: Fallback - any last { ... } block
+            if result is None:
+                import re
+                json_matches = re.findall(r'\{[^{}]*\}', text, re.DOTALL)
+                for match in reversed(json_matches):
+                    try:
+                        result = json.loads(match)
+                        break
+                    except json.JSONDecodeError:
+                        continue
+
+            # Method 4: json-repair as last resort (handles truncated JSON too)
             if result is None:
                 try:
                     from json_repair import repair_json
-                    repaired = repair_json(text, return_objects=True)
+                    import re
+                    # Strip markdown code fences before repair
+                    cleaned = re.sub(r'```json\s*', '', text)
+                    cleaned = re.sub(r'```\s*', '', cleaned)
+                    cleaned = cleaned.strip()
+                    repaired = repair_json(cleaned, return_objects=True)
                     if isinstance(repaired, dict):
                         result = repaired
+                    elif isinstance(repaired, list) and repaired:
+                        # Pick last dict in list (Trader's decision)
+                        for item in reversed(repaired):
+                            if isinstance(item, dict) and "action" in item:
+                                result = item
+                                break
                 except Exception:
                     pass
 
@@ -311,11 +335,18 @@ class GeminiClient(TradingLoggerMixin):
                 self.logger.error(f"All JSON extraction failed, raw: {text[:300]}")
                 return None
 
-            action = result.get("action", "SKIP").upper()
-            side = result.get("side", "YES").upper()
-            confidence = max(0.0, min(1.0, float(result.get("confidence", 0))))
-            limit_price = result.get("limit_price")
-            reasoning = result.get("reasoning", "")
+            action = str(result.get("action") or "SKIP").upper()
+            side = str(result.get("side") or "YES").upper()
+            try:
+                confidence = max(0.0, min(1.0, float(result.get("confidence") or 0)))
+            except (ValueError, TypeError):
+                confidence = 0.0
+            raw_price = result.get("limit_price")
+            try:
+                limit_price = int(raw_price) if raw_price and str(raw_price).strip() not in ("N/A", "None", "null", "") else None
+            except (ValueError, TypeError):
+                limit_price = None
+            reasoning = str(result.get("reasoning") or "")
 
             # Map to TradingDecision format
             if action == "BUY":
