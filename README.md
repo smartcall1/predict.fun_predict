@@ -1,622 +1,226 @@
-# 🤖 Kalshi AI Trading Bot
+# Predict.fun AI Trading Bot
 
-<div align="center">
+[Predict.fun](https://predict.fun) 예측 마켓에서 **Gemini 2.5 Flash**를 활용한 AI 자동 트레이딩 봇.
 
-[![Python 3.12+](https://img.shields.io/badge/python-3.12%2B-blue.svg)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
-[![GitHub Stars](https://img.shields.io/github/stars/ryanfrigo/kalshi-ai-trading-bot?style=flat&color=yellow)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/stargazers)
-[![GitHub Forks](https://img.shields.io/github/forks/ryanfrigo/kalshi-ai-trading-bot?style=flat&color=blue)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/network)
-[![GitHub Issues](https://img.shields.io/github/issues/ryanfrigo/kalshi-ai-trading-bot)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/issues)
-[![Last Commit](https://img.shields.io/github/last-commit/ryanfrigo/kalshi-ai-trading-bot)](https://github.com/ryanfrigo/kalshi-ai-trading-bot/commits/main)
-[![Code style: black](https://img.shields.io/badge/code%20style-black-000000.svg)](https://github.com/psf/black)
-
-**An autonomous trading bot for [Kalshi](https://kalshi.com) prediction markets powered by a five-model AI ensemble.**
-
-Five frontier LLMs debate every trade. The system only enters when they agree.
-
-[Quick Start](#-quick-start) · [Features](#-features) · [How It Works](#-how-it-works) · [Configuration](#configuration-reference) · [Contributing](CONTRIBUTING.md) · [Kalshi API Docs](https://trading-api.readme.io/reference/getting-started)
-
-</div>
+[ryanfrigo/kalshi-ai-trading-bot](https://github.com/ryanfrigo/kalshi-ai-trading-bot)을 포크하여 Predict.fun (BNB Chain) + Gemini Flash 단일 모델로 재구성.
 
 ---
 
-> ⚠️ **Disclaimer — This is experimental software for educational and research purposes only.** Trading involves substantial risk of loss. Only trade with capital you can afford to lose. Past performance does not guarantee future results. This software is not financial advice. The authors are not responsible for any financial losses incurred through the use of this software.
-
-> 📊 **Why Discipline Mode Exists** — Through extensive live trading on Kalshi across multiple strategies, we learned that trading without category enforcement and risk guardrails leads to significant losses. The most common mistakes: over-allocating to economic events (CPI, Fed decisions) with no real edge, and using aggressive position sizing. The consistently profitable edge we found was **NCAAB NO-side** trading (74% win rate, +10% ROI). This repo now ships with discipline systems enabled by default — category scoring, portfolio enforcement, and sane risk parameters.
+> **면책 조항** — 실험적 소프트웨어이며, 투자 조언이 아닙니다. 잃어도 되는 자본으로만 트레이딩하세요.
 
 ---
 
-## 🚀 Quick Start
+## 작동 방식
 
-**Three steps to get running in paper-trading mode (no real money):**
+```
+  INGEST              DECIDE (Gemini 2.5 Flash)     EXECUTE          TRACK
+ --------            ─────────────────────────     ---------       --------
+
+  Predict.fun  ────►  Gemini 2.5 Flash              Paper/Live       PnL
+  REST API            - 마켓 분석                    주문 실행        Win Rate
+                      - 확률 추정                    Kelly 사이징     AI Cost
+  600+ 마켓   ────►   - 엣지 계산                    수수료 반영      Telegram
+  (cursor             - BUY YES / BUY NO / SKIP     슬리피지 반영    알림
+   pagination)                                       가스비 반영
+```
+
+### 4단계 파이프라인
+
+1. **수집 (Ingest)** — Predict.fun API에서 활성 마켓 수집 (cursor 기반 페이지네이션, 600+ 마켓)
+2. **분석 (Decide)** — Gemini 2.5 Flash가 각 마켓의 진짜 확률을 추정, 마켓 가격과 비교하여 엣지 계산
+3. **실행 (Execute)** — 엣지가 5% 이상이고 확신도 60% 이상이면 진입. Kelly Criterion으로 포지션 사이징
+4. **추적 (Track)** — 모든 시그널/정산을 SQLite에 기록. 텔레그램으로 실시간 알림
+
+---
+
+## 빠른 시작
+
+### 1. 클론 및 설치
 
 ```bash
-# 1. Clone and set up
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
-python setup.py        # creates .venv, installs deps, checks config
-
-# 2. Add your API keys
-cp env.template .env   # then open .env and fill in KALSHI_API_KEY,
-                       # XAI_API_KEY, and OPENROUTER_API_KEY
-
-# 3. Run in disciplined mode (default — category scoring + guardrails)
-python cli.py run --paper
-
-# Or run the safe compounder (NO-side edge-based, most conservative)
-python cli.py run --safe-compounder
-```
-
-Then open the live dashboard in another terminal:
-
-```bash
-python cli.py dashboard
-```
-
-> **Need API keys?**
-> - Kalshi key + private key → [kalshi.com/account/settings](https://kalshi.com/account/settings) ([API docs](https://trading-api.readme.io/reference/getting-started))
-> - xAI key → [console.x.ai](https://console.x.ai/)
-> - OpenRouter key → [openrouter.ai](https://openrouter.ai/)
-
----
-
-## ✅ Features
-
-### Multi-Model AI Ensemble
-- ✅ **Five frontier LLMs** collaborate on every decision — Grok-3, Claude 3.5 Sonnet, GPT-4o, Gemini Flash 1.5, DeepSeek R1
-- ✅ **Role-based specialization** — each model plays a distinct analytical role (forecaster, bull, bear, risk manager, news analyst)
-- ✅ **Consensus gating** — positions are skipped when models diverge beyond a configurable confidence threshold
-- ✅ **Deterministic outputs** — temperature=0 for reproducible AI reasoning
-
-### Trading Strategies
-- ✅ **Directional trading** (50% of capital) — AI-predicted probability edge with Kelly Criterion sizing
-- ✅ **Market making** (40%) — automated limit orders capturing bid-ask spread
-- ✅ **Arbitrage detection** (10%) — cross-market opportunity scanning
-
-### Risk Management
-- ✅ **Fractional Kelly** position sizing (0.75x Kelly for volatility control)
-- ✅ **Hard daily loss limit** — stops trading at 15% drawdown
-- ✅ **Max drawdown circuit breaker** — halts at 50% portfolio drawdown
-- ✅ **Sector concentration cap** — no more than 90% in any single category
-- ✅ **Daily AI cost budget** — stops spending when API costs hit the configurable daily limit (default: $10/day)
-
-### Dynamic Exit Strategies
-- ✅ Trailing take-profit at 20% gain
-- ✅ Stop-loss at 15% per position
-- ✅ Confidence-decay exits when AI conviction drops
-- ✅ Time-based exits (10-day max hold)
-- ✅ Volatility-adjusted thresholds
-
-### Observability
-- ✅ **Real-time Streamlit dashboard** — portfolio value, positions, P&L, AI decision logs
-- ✅ **Paper trading mode** — simulate trades without real orders; track outcomes on settled markets
-- ✅ **SQLite telemetry** — every trade, AI decision, and cost metric logged locally
-- ✅ **Unified CLI** — `run`, `dashboard`, `status`, `health`, `backtest` commands
-
----
-
-## 🧠 How It Works
-
-The bot runs a four-stage pipeline on a continuous loop:
-
-```
-  INGEST               DECIDE (5-Model Ensemble)    EXECUTE       TRACK
- --------             ─────────────────────────    ---------    --------
-                      ┌─────────────────────────┐
-  Kalshi    ────────► │  Grok-β  (Forecaster 30%)│
-  REST API            ├─────────────────────────┤
-                      │  Claude  (News Analyst 20%)│
-  WebSocket ────────► ├─────────────────────────┤
-  Stream              │  GPT-4o  (Bull Case   20%)│  ──► Kalshi  ──► P&L
-                      ├─────────────────────────┤      Order       Win Rate
-  RSS / News ───────► │  Gemini  (Bear Case   15%)│      Router     Sharpe
-  Feeds               ├─────────────────────────┤               Drawdown
-                      │  DeepSeek(Risk Mgr    15%)│      Kelly    Cost
-  Volume &  ────────► └─────────────────────────┘      Sizing   Budget
-  Price Data             Debate → Consensus
-                         Confidence Calibration
-```
-
-### Stage 1 — Ingest
-Market data, order book snapshots, and news feeds are pulled via the Kalshi REST API and WebSocket stream. RSS feeds from financial news sources supplement the signal.
-
-### Stage 2 — Decide (Multi-Model Ensemble)
-Each of the five models analyzes the incoming data from its assigned perspective and returns a probability estimate + confidence score. The ensemble combines weighted votes:
-
-| Model | Role | Weight |
-|---|---|---|
-| Grok-3 (xAI) | Lead Forecaster | 30% |
-| Claude 3.5 Sonnet (OpenRouter) | News Analyst | 20% |
-| GPT-4o (OpenRouter) | Bull Researcher | 20% |
-| Gemini Flash 1.5 (OpenRouter) | Bear Researcher | 15% |
-| DeepSeek R1 (OpenRouter) | Risk Manager | 15% |
-
-If the weighted confidence falls below `min_confidence_to_trade` (default: 0.50), the opportunity is skipped. If models disagree significantly, position size is automatically reduced.
-
-### Stage 3 — Execute
-Qualifying trades are sized using the **Kelly Criterion** (fractional 0.75x) and routed through Kalshi's order API. Market-making orders are placed symmetrically around the mid-price.
-
-### Stage 4 — Track
-Every decision is written to a local SQLite database. The dashboard and `--stats` commands surface cumulative P&L, win rate, Sharpe ratio, and per-strategy breakdowns in real time.
-
----
-
-## 📦 Installation
-
-### Prerequisites
-
-- Python 3.12 or later
-- A [Kalshi](https://kalshi.com) account with API access ([API docs](https://trading-api.readme.io/reference/getting-started))
-- An [xAI](https://console.x.ai/) API key (Grok-4)
-- An [OpenRouter](https://openrouter.ai/) API key (Claude, GPT-4o, Gemini, DeepSeek)
-
-### Automated Setup (Recommended)
-
-```bash
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
-python setup.py
-```
-
-The setup script will:
-- ✅ Check Python version compatibility
-- ✅ Create virtual environment
-- ✅ Install all dependencies (with Python 3.14 compatibility handling)
-- ✅ Test that the dashboard can run
-- ✅ Print troubleshooting guidance
-
-### Manual Installation
-
-```bash
-git clone https://github.com/ryanfrigo/kalshi-ai-trading-bot.git
-cd kalshi-ai-trading-bot
-
-python -m venv .venv
-source .venv/bin/activate        # macOS / Linux
-# .venv\Scripts\activate          # Windows
-
-# Python 3.14 users only:
-export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-
+git clone https://github.com/smartcall1/predict.fun_predict.git
+cd predict.fun_predict
 pip install -r requirements.txt
 ```
 
-### Configuration
+### 2. 환경변수 설정
 
 ```bash
-cp env.template .env   # fill in your keys
+cp env.template .env
 ```
 
-| Variable | Description |
-|---|---|
-| `KALSHI_API_KEY` | Your Kalshi API key ID |
-| `XAI_API_KEY` | xAI key for Grok-4 |
-| `OPENROUTER_API_KEY` | OpenRouter key (Claude, GPT-4o, Gemini, DeepSeek) |
-| `OPENAI_API_KEY` | Optional fallback |
+`.env` 파일에 아래 키 입력:
 
-Place your Kalshi private key as `kalshi_private_key` (no extension) in the project root. Download from [Kalshi Settings → API](https://kalshi.com/account/settings). This file is git-ignored.
+| 변수 | 설명 | 발급처 |
+|------|------|--------|
+| `PREDICT_API_KEY` | Predict.fun API 키 | [Discord](https://discord.gg/predictdotfun) |
+| `GEMINI_API_KEY` | Gemini API 키 | [Google AI Studio](https://aistudio.google.com/app/apikey) |
+| `TELEGRAM_BOT_TOKEN` | 텔레그램 봇 토큰 | [@BotFather](https://t.me/BotFather) |
+| `TELEGRAM_CHAT_ID` | 텔레그램 채팅 ID | [@userinfobot](https://t.me/userinfobot) |
 
-### Initialize the Database
-
-```bash
-python -m src.utils.database
-```
-
-> ⚠️ Use `-m` flag — running `python src/utils/database.py` directly will fail with a module import error.
-
----
-
-## 🖥️ Running
+### 3. 실행
 
 ```bash
-# Paper trading (no real orders — safe to test)
-python cli.py run --paper
-
-# Live trading (real money)
-python cli.py run --live
-
-# Launch monitoring dashboard
-python cli.py dashboard
-
-# Check portfolio balance and open positions
-python cli.py status
-
-# Verify all API connections
-python cli.py health
-```
-
-Or invoke the bot script directly:
-
-```bash
-python beast_mode_bot.py              # Paper trading
-python beast_mode_bot.py --live       # Live trading
-python beast_mode_bot.py --dashboard  # Dashboard mode
-```
-
----
-
-## 📊 Paper Trading Dashboard
-
-Simulate trades without risking real money. Every signal is logged to SQLite and a static HTML dashboard renders cumulative P&L, win rate, and per-signal details after markets settle.
-
-```bash
-# Scan markets and log signals
+# 페이퍼 트레이딩 (1회 스캔)
 python paper_trader.py
 
-# Continuous scanning every 15 minutes
-python paper_trader.py --loop --interval 900
+# 연속 스캔 (15분 간격)
+python paper_trader.py --loop
 
-# Settle markets and update outcomes
+# 정산 확인
 python paper_trader.py --settle
 
-# Regenerate HTML dashboard
-python paper_trader.py --dashboard
-
-# Print stats to terminal
+# 통계 조회
 python paper_trader.py --stats
-```
 
-The dashboard writes to `docs/paper_dashboard.html` — open locally or host via GitHub Pages.
+# 대시보드 생성
+python paper_trader.py --dashboard
+```
 
 ---
 
-## 🗂️ Project Structure
+## Termux (Android) 실행
+
+```bash
+pkg install python git
+git clone https://github.com/smartcall1/predict.fun_predict.git
+cd predict.fun_predict
+pip install -r requirements.txt
+cp env.template .env
+# nano .env  <- API 키 입력
+python paper_trader.py --loop
+```
+
+> numpy/scipy/pandas는 선택 사항. 핵심 파이프라인은 이 라이브러리 없이 동작.
+
+---
+
+## 텔레그램 알림
+
+| 이벤트 | 알림 내용 |
+|--------|----------|
+| BUY 시그널 | 마켓명, YES/NO, 진입가, 확신도, 엣지, AI 분석 근거 |
+| 정산 | WIN/LOSS, 진입가 -> 정산가, PnL |
+| 스캔 완료 | 시그널 수, 스킵 수, AI 비용 |
+| 일일 요약 | 승률, 총 PnL, AI 비용, 순수익 |
+| 에러 | 에러 메시지 |
+
+---
+
+## 페이퍼 트레이딩 현실성
+
+실제 거래와 90%+ 유사도를 목표로 다음 비용을 시뮬레이션:
+
+| 비용 항목 | 적용 방식 | 비율 |
+|----------|----------|------|
+| 체결가 | 실제 오더북 best ask/bid 기반 | 실시간 |
+| 슬리피지 | 스프레드 50% + 수량 비례 (min 1%) | 1~4% |
+| 거래 수수료 | 마켓별 `feeRateBps` API 조회 | 기본 2% |
+| 가스비 | BNB Chain 고정 | $0.10/건 |
+| 스프레드 | bid-ask 차이 자동 반영 | 실시간 |
+
+---
+
+## 설정
+
+### .env 주요 파라미터
+
+```bash
+# 스캔 간격 (초, 기본 300 = 5분)
+SCAN_INTERVAL=300
+
+# 최대 동시 포지션
+MAX_POSITIONS=15
+
+# Kelly Criterion 분수 (0.25 = quarter-Kelly, 보수적)
+KELLY_FRACTION=0.25
+
+# 최소 AI 확신도 (이 이하면 스킵)
+MIN_CONFIDENCE=0.60
+
+# 최소 엣지 (AI확률 - 마켓가격 차이)
+MIN_EDGE=0.05
+
+# 일일 AI 비용 한도 (USD, 안전장치)
+DAILY_AI_COST_LIMIT=5.0
+
+# Gemini 모델 (기본값: 2.5 Flash)
+GEMINI_MODEL=gemini-2.5-flash-preview-05-20
+```
+
+---
+
+## AI 비용
+
+Gemini 2.5 Flash는 매우 저렴:
+
+| 시나리오 | 마켓 수 | 일일 분석 | 예상 비용 |
+|---------|--------|----------|----------|
+| 보수적 | 100개 | ~400회 | ~$0.07 |
+| 표준 | 600개 | ~1,200회 | ~$0.20 |
+| 공격적 | 600개 | ~5,000회 | ~$0.85 |
+
+`DAILY_AI_COST_LIMIT`에 도달하면 그날 남은 시간 동안 AI 분석을 자동 중단. 다음날 0시에 리셋.
+
+---
+
+## 프로젝트 구조
 
 ```
-kalshi-ai-trading-bot/
-├── beast_mode_bot.py          # Main bot entry point
-├── cli.py                     # Unified CLI: run, dashboard, status, health, backtest
-├── paper_trader.py            # Paper trading signal tracker
-├── pyproject.toml             # PEP 621 project metadata
-├── requirements.txt           # Pinned dependencies
-├── env.template               # Environment variable template
+predict.fun_predict/
+├── paper_trader.py              # 메인 엔트리포인트 (페이퍼 트레이딩)
+├── beast_mode_bot.py            # 고급 멀티전략 봇
+├── cli.py                       # 통합 CLI
+├── env.template                 # 환경변수 템플릿
+├── requirements.txt             # 의존성 (Termux 호환)
 │
 ├── src/
-│   ├── agents/                # Multi-model ensemble (forecaster, bull/bear, risk, trader)
-│   ├── clients/               # API clients (Kalshi, xAI, OpenRouter, WebSocket)
-│   ├── config/                # Settings and trading parameters
-│   ├── data/                  # News aggregation and sentiment analysis
-│   ├── events/                # Async event bus for real-time streaming
-│   ├── jobs/                  # Core pipeline: ingest, decide, execute, track, evaluate
-│   ├── strategies/            # Market making, portfolio optimization, quick flip
-│   └── utils/                 # Database, logging, prompts, risk helpers
+│   ├── clients/
+│   │   ├── predictfun_client.py # Predict.fun REST API 클라이언트
+│   │   ├── gemini_client.py     # Gemini 2.5 Flash AI 클라이언트
+│   │   ├── kalshi_client.py     # 호환 심 → PredictFunClient
+│   │   ├── xai_client.py        # 호환 심 → GeminiClient
+│   │   └── model_router.py      # 단일 모델 라우터
+│   │
+│   ├── config/
+│   │   └── settings.py          # 전체 설정 관리
+│   │
+│   ├── jobs/
+│   │   ├── ingest.py            # 마켓 수집 (Predict.fun)
+│   │   ├── decide.py            # AI 분석 및 결정
+│   │   ├── execute.py           # 주문 실행
+│   │   └── track.py             # 포지션 추적 및 정산
+│   │
+│   ├── strategies/              # 트레이딩 전략 (포트폴리오, 마켓메이킹 등)
+│   ├── paper/                   # 페이퍼 트레이딩 DB + 대시보드
+│   └── utils/
+│       ├── telegram.py          # 텔레그램 알림
+│       ├── database.py          # SQLite 데이터베이스
+│       └── ...
 │
-├── scripts/                   # Utility and diagnostic scripts
-├── docs/                      # Additional documentation + paper dashboard HTML
-└── tests/                     # Pytest test suite
+├── docs/                        # 대시보드 HTML
+└── tests/                       # 테스트
 ```
 
 ---
 
-## ⚙️ Configuration Reference
+## 원본 프로젝트
 
-All trading parameters live in `src/config/settings.py`:
+[ryanfrigo/kalshi-ai-trading-bot](https://github.com/ryanfrigo/kalshi-ai-trading-bot) (MIT License)
 
-```python
-# Position sizing
-max_position_size_pct  = 5.0     # Max 5% of balance per position
-max_positions          = 15      # Up to 15 concurrent positions
-kelly_fraction         = 0.75    # Fractional Kelly multiplier
+### 원본 대비 변경 사항
 
-# Market filtering
-min_volume             = 200     # Minimum contract volume
-max_time_to_expiry_days = 30     # Trade contracts up to 30 days out
-min_confidence_to_trade = 0.50   # Minimum ensemble confidence to enter
-
-# AI settings
-primary_model          = "grok-4"
-ai_temperature         = 0       # Deterministic outputs
-ai_max_tokens          = 8000
-
-# Risk management
-max_daily_loss_pct     = 15.0    # Hard daily loss limit
-daily_ai_cost_limit    = 10.0    # Max daily AI API spend (USD) — default $10/day
-```
-
-> **💸 Controlling AI spend (important for `movement_prediction` / xAI costs)**
->
-> The bot checks daily spend limits **before every xAI API call** — including `search()` and all market analysis calls. Once the limit is reached, all AI calls are skipped until the next calendar day.
->
-> Key knobs:
-> - `DAILY_AI_COST_LIMIT` env var (or `daily_ai_cost_limit` in `TradingConfig`) — max USD per day. **Default: $10.** Raise it only when you're comfortable with the spend. Example: `export DAILY_AI_COST_LIMIT=25`
-> - `scan_interval_seconds` — how often the bot scans markets. Lower = more AI calls per hour. Default: 60 seconds.
-> - `max_analyses_per_market_per_day` — cap on AI analyses per individual market per day. Default: 4.
->
-> The `movement_prediction` strategy runs AI analysis on **every scan cycle** for all candidate markets. If you have many active markets and a short scan interval, costs add up fast. Reduce `scan_interval_seconds` (e.g. `120`) or lower `max_analyses_per_market_per_day` (e.g. `2`) to cut frequency.
-
-The ensemble configuration (model roster, weights, debate settings) lives in `EnsembleConfig` in the same file.
-
-> **⚠️ AI Model Names** — xAI periodically renames Grok models. The default is currently set to `grok-3`. If you see a `model not found` error, update `primary_model` in `TradingConfig` and the `"grok-3"` key in `EnsembleConfig.models` to match the latest model name from [console.x.ai](https://console.x.ai/). You can also override via environment variable: set `PRIMARY_MODEL=grok-3-mini` (or any valid model ID) in your `.env` file.
+| 항목 | 원본 (Kalshi) | 본 프로젝트 (Predict.fun) |
+|------|-------------|------------------------|
+| 마켓 | Kalshi (미국 전용) | Predict.fun (BNB Chain, 글로벌) |
+| AI 모델 | 5모델 앙상블 (Grok, Claude, GPT-4o, Gemini, DeepSeek) | Gemini 2.5 Flash 단일 |
+| AI 비용 | ~$10-15/일 | ~$0.10-0.50/일 |
+| 인증 | RSA PSS 서명 | API Key |
+| 통화 | USD (cents) | USDT (BNB Chain) |
+| 알림 | 없음 | 텔레그램 실시간 알림 |
 
 ---
 
-## 📈 Performance Tracking
+## 라이선스
 
-Every trade, AI decision, and cost metric is recorded to `trading_system.db` (local SQLite). Use the dashboard or scripts in `scripts/` to review:
-
-- Cumulative P&L and win rate
-- Sharpe ratio and maximum drawdown
-- AI confidence calibration
-- Cost per trade and daily API budget utilization
-- Per-strategy breakdowns (directional vs. market making)
-
----
-
-## 🛠️ Development
-
-### Running Tests
-
-```bash
-pytest tests/          # full suite
-pytest tests/ -v       # verbose
-pytest --cov=src       # with coverage
-```
-
-### Code Quality
-
-```bash
-black src/ tests/ cli.py beast_mode_bot.py
-isort src/ tests/ cli.py beast_mode_bot.py
-mypy src/
-```
-
-### Adding a New Strategy
-
-1. Create a module in `src/strategies/`
-2. Wire it into `src/strategies/unified_trading_system.py`
-3. Set allocation percentage in `src/config/settings.py`
-4. Add tests in `tests/`
-
----
-
-## 🔧 Troubleshooting
-
-<details>
-<summary><strong>Bot not placing live trades despite --live flag</strong></summary>
-
-Check logs for the mode confirmation string:
-
-```bash
-grep -i "live trading\|paper trading\|LIVE ORDER\|PAPER TRADE" logs/trading_system.log | tail -20
-```
-
-- `"LIVE TRADING MODE ENABLED"` → correct
-- `"Paper trading mode"` → still in paper mode; verify API key has TRADING permissions in [Kalshi Settings](https://kalshi.com/account/settings)
-
-</details>
-
-<details>
-<summary><strong>Dashboard won't launch / import errors</strong></summary>
-
-Import errors in VS Code are IDE linter warnings, not runtime errors.
-
-```bash
-# Fix: activate venv, then run from project root
-source .venv/bin/activate
-python beast_mode_dashboard.py
-```
-
-Set VS Code Python interpreter to `.venv/bin/python` via `Cmd+Shift+P → Python: Select Interpreter`.
-
-</details>
-
-<details>
-<summary><strong>Python 3.14 PyO3 compatibility error</strong></summary>
-
-```bash
-# Quick fix
-export PYO3_USE_ABI3_FORWARD_COMPATIBILITY=1
-pip install -r requirements.txt
-
-# Recommended: use Python 3.13
-pyenv install 3.13.1 && pyenv local 3.13.1
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-```
-
-</details>
-
----
-
-## 🤝 Contributing
-
-Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for full guidelines.
-
-**Quick steps:**
-
-1. Fork the repository
-2. Create a feature branch: `git checkout -b feature/your-feature`
-3. Make changes, add tests, run `pytest` and `black`
-4. Commit with [conventional commit](https://www.conventionalcommits.org/) format: `feat: add new model weight config`
-5. Open a Pull Request
-
-**Good first issues:** look for the [`good first issue`](https://github.com/ryanfrigo/kalshi-ai-trading-bot/issues?q=label%3A%22good+first+issue%22) label.
-
----
-
----
-
-## 🛡️ Trading Modes
-
-The bot now supports three distinct trading modes. **Disciplined is the default.**
-
-### 1. Disciplined Mode (DEFAULT) — `python cli.py run`
-
-The safe, category-aware mode. Runs the AI ensemble but with guardrails:
-
-```bash
-python cli.py run --paper        # Paper trading (safe, no real money)
-python cli.py run --live         # Live trading with discipline enforced
-python cli.py run --disciplined  # Explicit flag (same as default)
-```
-
-Settings enforced:
-- Max drawdown: **15%** (vs 50% in beast mode)
-- Min confidence: **65%** (vs 50% in beast mode)
-- Max position size: **3%** of portfolio
-- Max sector concentration: **30%**
-- Kelly fraction: **0.25** (quarter-Kelly)
-- Category scoring active — blocks categories with score < 30
-
-### 2. Safe Compounder — `python cli.py run --safe-compounder`
-
-The most conservative and historically validated strategy:
-
-```bash
-python cli.py run --safe-compounder           # Dry run (shows opportunities)
-python cli.py run --safe-compounder --live    # Live execution
-```
-
-Strategy rules:
-- **NO side ONLY** — never buys YES
-- YES last price must be ≤ 20¢ (near-certain NO outcome)
-- NO ask must be > 80¢
-- Edge (EV - price) must be > 5¢
-- Places resting maker orders at `lowest_ask - 1¢` (near-zero fees)
-- Max 10% of portfolio per position (half-Kelly sizing)
-- Skips all sports, entertainment, and "mention" markets
-
-This strategy is the closest thing to a pure edge play on Kalshi.
-
-### 3. Beast Mode — `python cli.py run --beast`
-
-> ⚠️ **Not recommended.** Aggressive settings with no category guardrails have historically led to significant losses in live prediction market trading.
-
-The original aggressive mode with minimal guardrails. Available for comparison/research:
-
-```bash
-python cli.py run --beast --paper  # Only run beast mode in paper trading
-```
-
-Aggressive settings:
-- Max drawdown: 50%
-- Min confidence: 50%
-- Max position: 5%
-- Sector cap: 90%
-- Kelly fraction: 0.75
-
----
-
-## 📊 Category Scoring System
-
-The category scorer evaluates each Kalshi market category on a 0-100 scale and enforces allocation limits.
-
-### Scoring Formula
-
-| Factor | Weight | Description |
-|--------|--------|-------------|
-| ROI | 40% | Average return on investment across all trades |
-| Recent Trend | 25% | Direction of last 10 trades (recency-weighted) |
-| Sample Size | 20% | More data = more confidence in the score |
-| Win Rate | 15% | Percentage of winning trades |
-
-### Allocation Tiers
-
-| Score Range | Max Position Size | Status |
-|-------------|-------------------|--------|
-| 80-100 | 20% of portfolio | STRONG ✅ |
-| 60-79 | 10% of portfolio | GOOD 🟢 |
-| 40-59 | 5% of portfolio | WEAK 🟡 |
-| 20-39 | 2% of portfolio | POOR 🟠 |
-| 0-19 | 0% (blocked) | BLOCKED 🚫 |
-
-**Categories scoring below 30 are hard-blocked** — the bot will not enter any trade in those categories regardless of AI confidence.
-
-### Check Current Scores
-
-```bash
-python cli.py scores
-```
-
-Example output:
-```
-======================================================================
-  CATEGORY SCORES
-  Category           Score     WR      ROI  Trades   Alloc  Status
-  ------------------ ------ ------ -------- ------- ------ ----------
-  NCAAB               72.3   74%   +10.0%      50    10%   GOOD 🟢
-  NBA                 41.2   52%    +1.5%      28     5%   WEAK 🟡
-  POLITICS            31.0   48%    -8.0%      15     2%   MARGINAL 🔴
-  CPI                  8.4   25%   -65.0%      20     0%   BLOCKED 🚫
-  FED                 12.1   32%   -40.0%      25     0%   BLOCKED 🚫
-  ECON_MACRO          10.5   30%   -55.0%      40     0%   BLOCKED 🚫
-======================================================================
-```
-
-### Real Trading Data (Seeded)
-
-The scorer is pre-seeded with real historical data:
-- **NCAAB**: 74% win rate, +10% ROI → score ~72 → allowed at 10% allocation
-- **ECON/CPI**: 25% win rate, -65% ROI → score ~8 → **blocked**
-- **FED**: 32% win rate, -40% ROI → score ~12 → **blocked**
-
----
-
-## 📈 Trade History & Analysis
-
-```bash
-python cli.py history           # Last 50 trades with category breakdown
-python cli.py history --limit 100  # Last 100 trades
-```
-
----
-
-## 🧠 Lessons Learned
-
-After extensive live trading across multiple strategies, here's what the data taught:
-
-### 1. Category discipline > AI confidence
-
-The AI ensemble can be 80% confident on a CPI trade and still be wrong. Market-implied probabilities on economic releases are already efficient — there's no structural edge for a retail bot. The bot was trading these with the same aggression as sports markets where it had actual edge.
-
-**Fix:** Category scoring now hard-blocks economic markets until they prove a positive edge over ≥5 trades.
-
-### 2. Kelly fraction matters enormously
-
-A Kelly fraction of 0.75 sounds reasonable. It's not — it compounds losses catastrophically. At 0.75x Kelly with a 45% win rate, you can lose 80% of capital in a standard drawdown scenario.
-
-**Fix:** Default is now 0.25x Kelly (quarter-Kelly), which is more conservative than most professional traders use.
-
-### 3. Max drawdown must have teeth
-
-A 50% drawdown limit means you can lose half your money before the bot stops. That's not a limit — it's a suggestion. A 15% limit forces the bot to stop while you still have capital to analyze and adjust.
-
-**Fix:** 15% max drawdown, with the circuit breaker actually stopping trades (not just logging a warning).
-
-### 4. Sector concentration = correlated losses
-
-When 90% of capital is in economic categories and there's a Fed meeting, everything moves together. Correlated losses compound faster than diversified losses.
-
-**Fix:** 30% sector cap means no single category can dominate the portfolio.
-
-### 5. Consistency > frequency
-
-The bot was scanning every 30 seconds and trading everything it found. More trades with no edge = faster path to zero.
-
-**Fix:** 60-second scan interval. Trades only when confidence ≥ 65% AND category score ≥ 30.
-
----
-
-## 📚 Resources
-
-- [Kalshi Trading API Docs](https://trading-api.readme.io/reference/getting-started)
-- [Kalshi API Authentication](https://trading-api.readme.io/reference/authentication)
-- [Kalshi Markets Overview](https://kalshi.com/markets)
-- [OpenRouter Model Catalog](https://openrouter.ai/models)
-- [xAI API (Grok)](https://console.x.ai/)
-
----
-
-## 📄 License
-
-This project is licensed under the MIT License. See [LICENSE](LICENSE) for details.
-
----
-
-<div align="center">
-
-**If this project is useful to you, consider giving it a ⭐**
-
-Made with ❤️ for the Kalshi trading community
-
-</div>
+MIT License. [LICENSE](LICENSE) 참조.
