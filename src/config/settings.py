@@ -28,7 +28,7 @@ class APIConfig:
 
     # Gemini (단일 모델)
     gemini_api_key: str = field(default_factory=lambda: os.getenv("GEMINI_API_KEY", ""))
-    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash-preview-05-20"))
+    gemini_model: str = field(default_factory=lambda: os.getenv("GEMINI_MODEL", "gemini-2.5-flash"))
 
     # Telegram
     telegram_bot_token: str = field(default_factory=lambda: os.getenv("TELEGRAM_BOT_TOKEN", ""))
@@ -83,7 +83,7 @@ class TradingConfig:
     daily_ai_budget: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "5.0")))
     daily_ai_cost_limit: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "5.0")))
     enable_daily_cost_limiting: bool = True
-    max_ai_cost_per_decision: float = 0.01  # Gemini Flash는 매우 저렴
+    max_ai_cost_per_decision: float = 0.05  # Gemini Flash 분석 + 뉴스 검색 비용 포함
     analysis_cooldown_hours: int = 3
     max_analyses_per_market_per_day: int = 4
     sleep_when_limit_reached: bool = True
