@@ -42,18 +42,14 @@ class DailyUsageTracker:
 
 # ─── Prompt ─────────────────────────────────────────────────────────────
 
-ANALYSIS_PROMPT = """You are a team of expert prediction market traders analyzing a Predict.fun market:
-
-1. **Forecaster** - Estimate the true YES probability using all available data.
-2. **Critic** - Challenge the forecast. Identify biases, missing context, and risks.
-3. **Trader** - Make the final BUY/SKIP decision based on the debate.
+ANALYSIS_PROMPT = """You are a team of 5 expert prediction market specialists analyzing a Predict.fun market. Execute each role IN ORDER, then produce a final JSON decision.
 
 ---
 **Market Context:**
 - **Title:** {title}
 - **Category:** {category}
-- **YES Price:** {yes_price:.2f} (market-implied probability: {yes_pct:.0f}%)
-- **NO Price:** {no_price:.2f} (market-implied probability: {no_pct:.0f}%)
+- **YES Price:** {yes_price:.2f} (market-implied: {yes_pct:.0f}%)
+- **NO Price:** {no_price:.2f} (market-implied: {no_pct:.0f}%)
 - **Volume (USD):** ${volume:,.0f}
 - **Available Cash:** ${balance:.2f}
 
@@ -61,37 +57,41 @@ ANALYSIS_PROMPT = """You are a team of expert prediction market traders analyzin
 {news_summary}
 
 ---
-**Your Rules:**
-- **EV Calculation:** EV = (Your Estimated True Probability) - (Market YES Price). Only trade if |EV| >= 0.05 (5% edge).
-- **Confidence:** Must be >= 0.60 to trade. If uncertain, SKIP.
-- **Side Selection:**
-  - BUY YES if your_probability > market_yes_price + 0.05 (you think YES is underpriced)
-  - BUY NO if your_probability < market_yes_price - 0.05 (you think NO is underpriced)
-  - SKIP if edge < 5% or confidence < 60%
-- **Limit Price:** Set in cents (1-99). This is your target entry price for the YES side.
-  - For BUY YES: limit_price should be slightly above current YES price
-  - For BUY NO: limit_price = 100 - your_target_no_price
-- **Risk:** Never recommend trades on markets you cannot analyze with reasonable confidence.
+**STEP 1 — FORECASTER (Base-rate calibrated probability)**
+- Start with the BASE RATE: how often do events like this resolve YES historically?
+- Update with CURRENT CONDITIONS: specific evidence that shifts probability
+- Apply CALIBRATION: guard against overconfidence, regress toward base rate when uncertain
+- Output: estimated TRUE probability of YES (0.0 to 1.0)
 
----
-**Analysis Process:**
+**STEP 2 — BULL RESEARCHER (Strongest case for YES)**
+- Present 3 concrete arguments with evidence for why YES will happen
+- Identify CATALYSTS: near-term events that could push probability higher
+- Establish PROBABILITY FLOOR: minimum reasonable YES probability
 
-**Forecaster:** Analyze the market. Consider:
-- Domain-specific knowledge (sports stats, political polls, economic indicators, crypto trends)
-- Base rates and historical precedents
-- Time horizon and resolution criteria
-- Current market efficiency (is the crowd likely right?)
-Estimate the TRUE probability of YES outcome (0.0 to 1.0).
+**STEP 3 — BEAR RESEARCHER (Strongest case for NO)**
+- Present 3 concrete counter-arguments with evidence for why NO will happen
+- Identify RISK FACTORS: what could go wrong for YES holders
+- Reference HISTORICAL PRECEDENT: similar events that failed
+- Establish PROBABILITY CEILING: maximum reasonable YES probability
 
-**Critic:** Challenge the Forecaster:
-- What information might be missing?
-- Is the Forecaster overconfident or underconfident?
-- Are there known biases (recency, anchoring, availability)?
-- Could the market price already reflect this analysis?
+**STEP 4 — RISK MANAGER (Quantitative risk/reward)**
+- Calculate EV: (estimated_probability - market_price). Require |EV| >= 0.05
+- Assess RISK SCORE (1-10): consider volume, time-to-expiry, information quality, bull/bear disagreement
+- Check: if bull floor > market price → strong BUY YES signal
+- Check: if bear ceiling < market price → strong BUY NO signal
+- If risk_score > 7, recommend SKIP regardless of EV
 
-**Trader:** Based on the debate, output ONLY a JSON decision:
+**STEP 5 — TRADER (Final decision)**
+Synthesize all analysis into a single JSON decision.
+Rules:
+- BUY YES only if: estimated_prob > market_yes_price + 0.05 AND confidence >= 0.60
+- BUY NO only if: estimated_prob < market_yes_price - 0.05 AND confidence >= 0.60
+- SKIP if: edge < 5% OR confidence < 60% OR risk_score > 7 OR agents disagree significantly
+- limit_price: target entry in cents (1-99). For BUY YES: near current ask. For BUY NO: 100 - target_no_price
+- When in doubt, ALWAYS SKIP. Capital preservation is priority.
 
-{{"action": "BUY" or "SKIP", "side": "YES" or "NO", "limit_price": 1-99, "confidence": 0.0-1.0, "reasoning": "Detailed reasoning including estimated true probability, EV calculation, and key factors."}}
+**OUTPUT: JSON only, no other text:**
+{{"action": "BUY" or "SKIP", "side": "YES" or "NO", "limit_price": 1-99, "confidence": 0.0-1.0, "reasoning": "Include: estimated probability, EV calculation, risk score, key bull/bear factors, and final rationale."}}
 """
 
 
