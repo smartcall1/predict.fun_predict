@@ -45,7 +45,7 @@ class TradingConfig:
     min_balance: float = 50.0               # 최소 잔고
 
     # Market filtering
-    min_volume: float = 100.0               # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
+    min_volume: float = 1000.0              # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
     max_time_to_expiry_days: int = 30       # 최대 만기일
 
     # AI decision thresholds
