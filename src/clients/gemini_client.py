@@ -140,8 +140,7 @@ class GeminiClient(TradingLoggerMixin):
                 generation_config={
                     "temperature": settings.trading.ai_temperature,
                     "top_p": 0.95,
-                    "max_output_tokens": settings.trading.ai_max_tokens,
-                    "response_mime_type": "application/json",
+                    "max_output_tokens": 4096,  # 5-agent debate needs more tokens
                 },
             )
         except Exception as e:
@@ -268,21 +267,49 @@ class GeminiClient(TradingLoggerMixin):
                     response_time=elapsed,
                 )
 
-            # Parse response (with json-repair fallback for malformed Gemini output)
+            # Parse response — extract JSON from mixed text+JSON output
             text = response.text.strip()
+            result = None
+
+            # Method 1: Try direct JSON parse
             try:
                 result = json.loads(text)
             except json.JSONDecodeError:
+                pass
+
+            # Method 2: Extract JSON from ```json ... ``` block
+            if result is None:
+                import re
+                json_match = re.search(r'```json\s*(.*?)\s*```', text, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(1))
+                    except json.JSONDecodeError:
+                        pass
+
+            # Method 3: Find first { ... } block
+            if result is None:
+                import re
+                json_match = re.search(r'\{[^{}]*\}', text, re.DOTALL)
+                if json_match:
+                    try:
+                        result = json.loads(json_match.group(0))
+                    except json.JSONDecodeError:
+                        pass
+
+            # Method 4: json-repair as last resort
+            if result is None:
                 try:
                     from json_repair import repair_json
                     repaired = repair_json(text, return_objects=True)
                     if isinstance(repaired, dict):
                         result = repaired
-                    else:
-                        raise ValueError(f"Repaired JSON is not a dict: {type(repaired)}")
-                except Exception as repair_err:
-                    self.logger.error(f"JSON repair also failed: {repair_err}, raw: {text[:200]}")
-                    return None
+                except Exception:
+                    pass
+
+            if not result or not isinstance(result, dict):
+                self.logger.error(f"All JSON extraction failed, raw: {text[:300]}")
+                return None
 
             action = result.get("action", "SKIP").upper()
             side = result.get("side", "YES").upper()
