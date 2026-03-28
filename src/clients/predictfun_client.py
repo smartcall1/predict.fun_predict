@@ -167,6 +167,17 @@ class PredictFunClient(TradingLoggerMixin):
         """Get market orderbook."""
         return await self._request("GET", f"/v1/markets/{ticker}/orderbook", params={"depth": depth})
 
+    async def get_market_stats(self, ticker: str) -> Optional[Dict]:
+        """Get market stats (volume, liquidity). Separate endpoint from market detail."""
+        try:
+            data = await self._request("GET", f"/v1/markets/{ticker}/stats")
+            if isinstance(data, dict):
+                return data
+            return None
+        except Exception as e:
+            self.logger.debug(f"get_market_stats({ticker}) failed: {e}")
+            return None
+
     async def get_market_history(self, ticker: str, limit: int = 100) -> Dict[str, Any]:
         """Get market price history / activity."""
         data = await self._request("GET", f"/v1/markets/{ticker}/activity", params={"limit": limit})

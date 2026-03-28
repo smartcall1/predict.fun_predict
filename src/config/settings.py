@@ -45,7 +45,7 @@ class TradingConfig:
     min_balance: float = 50.0               # 최소 잔고
 
     # Market filtering
-    min_volume: float = 0.0                 # Predict.fun API는 목록에서 volume 미제공 → 0으로 설정
+    min_volume: float = 100.0               # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
     max_time_to_expiry_days: int = 30       # 최대 만기일
 
     # AI decision thresholds

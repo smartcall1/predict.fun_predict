@@ -177,18 +177,50 @@ async def process_and_queue_markets(
         await db_manager.upsert_markets(markets_to_upsert)
         logger.info(f"Upserted {len(markets_to_upsert)} markets from Predict.fun.")
 
-        # Filter eligible markets for AI analysis
-        eligible_markets = [
+        # Category filter first (cheap, no API calls)
+        category_filtered = [
             m for m in markets_to_upsert
-            if m.volume >= settings.trading.min_volume
-            and (
+            if (
                 not settings.trading.preferred_categories
                 or m.category in settings.trading.preferred_categories
             )
             and m.category not in settings.trading.excluded_categories
         ]
 
-        logger.info(f"Found {len(eligible_markets)} eligible markets (min_vol={settings.trading.min_volume}).")
+        # Fetch stats for category-filtered markets to get real volume
+        # Use the same client from run_ingestion (passed via closure or re-create)
+        from src.clients.kalshi_client import KalshiClient
+        stats_client = KalshiClient()
+        eligible_markets = []
+
+        for m in category_filtered:
+            try:
+                stats = await stats_client.get_market_stats(m.market_id)
+                if stats:
+                    vol_total = float(stats.get("volumeTotalUsd", 0))
+                    vol_24h = float(stats.get("volume24hUsd", 0))
+                    liquidity = float(stats.get("totalLiquidityUsd", 0))
+                    m.volume = int(vol_total)
+
+                    if vol_total >= settings.trading.min_volume:
+                        eligible_markets.append(m)
+                    else:
+                        continue  # Skip low-volume markets
+                else:
+                    # stats 조회 실패 시 일단 포함 (AI가 판단)
+                    eligible_markets.append(m)
+            except Exception as e:
+                logger.debug(f"Stats fetch failed for {m.market_id}: {e}")
+                eligible_markets.append(m)
+
+            await asyncio.sleep(0.15)  # Rate limiting for stats calls
+
+        await stats_client.close()
+
+        logger.info(
+            f"Found {len(eligible_markets)} eligible markets "
+            f"(from {len(category_filtered)} category-filtered, min_vol=${settings.trading.min_volume})."
+        )
         for market in eligible_markets:
             await queue.put(market)
     else:
