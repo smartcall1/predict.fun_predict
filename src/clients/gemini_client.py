@@ -245,9 +245,21 @@ class GeminiClient(TradingLoggerMixin):
                     response_time=elapsed,
                 )
 
-            # Parse response
+            # Parse response (with json-repair fallback for malformed Gemini output)
             text = response.text.strip()
-            result = json.loads(text)
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError:
+                try:
+                    from json_repair import repair_json
+                    repaired = repair_json(text, return_objects=True)
+                    if isinstance(repaired, dict):
+                        result = repaired
+                    else:
+                        raise ValueError(f"Repaired JSON is not a dict: {type(repaired)}")
+                except Exception as repair_err:
+                    self.logger.error(f"JSON repair also failed: {repair_err}, raw: {text[:200]}")
+                    return None
 
             action = result.get("action", "SKIP").upper()
             side = result.get("side", "YES").upper()
