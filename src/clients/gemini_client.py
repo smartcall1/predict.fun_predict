@@ -42,35 +42,56 @@ class DailyUsageTracker:
 
 # ─── Prompt ─────────────────────────────────────────────────────────────
 
-ANALYSIS_PROMPT = """You are an expert prediction market trader with deep knowledge across sports, politics, economics, crypto, and current events.
+ANALYSIS_PROMPT = """You are a team of expert prediction market traders analyzing a Predict.fun market:
 
-Analyze this prediction market and decide whether to trade.
+1. **Forecaster** - Estimate the true YES probability using all available data.
+2. **Critic** - Challenge the forecast. Identify biases, missing context, and risks.
+3. **Trader** - Make the final BUY/SKIP decision based on the debate.
 
-## Market Information
-- **Title**: {title}
-- **Category**: {category}
-- **YES price**: {yes_price:.2f} (market-implied probability)
-- **NO price**: {no_price:.2f}
-- **Volume**: {volume}
-- **Available balance**: ${balance:.2f}
+---
+**Market Context:**
+- **Title:** {title}
+- **Category:** {category}
+- **YES Price:** {yes_price:.2f} (market-implied probability: {yes_pct:.0f}%)
+- **NO Price:** {no_price:.2f} (market-implied probability: {no_pct:.0f}%)
+- **Volume (USD):** ${volume:,.0f}
+- **Available Cash:** ${balance:.2f}
 
-## News/Context
+**News/Context:**
 {news_summary}
 
-## Your Task
-1. Identify the domain (sports, politics, economics, crypto, etc.)
-2. Estimate the TRUE probability of the YES outcome (0.0 to 1.0)
-3. Compare with market price to find edge
-4. Only recommend BUY if edge > 5% AND confidence > 60%
+---
+**Your Rules:**
+- **EV Calculation:** EV = (Your Estimated True Probability) - (Market YES Price). Only trade if |EV| >= 0.05 (5% edge).
+- **Confidence:** Must be >= 0.60 to trade. If uncertain, SKIP.
+- **Side Selection:**
+  - BUY YES if your_probability > market_yes_price + 0.05 (you think YES is underpriced)
+  - BUY NO if your_probability < market_yes_price - 0.05 (you think NO is underpriced)
+  - SKIP if edge < 5% or confidence < 60%
+- **Limit Price:** Set in cents (1-99). This is your target entry price for the YES side.
+  - For BUY YES: limit_price should be slightly above current YES price
+  - For BUY NO: limit_price = 100 - your_target_no_price
+- **Risk:** Never recommend trades on markets you cannot analyze with reasonable confidence.
 
-## Decision Rules
-- BUY YES if your_probability > market_yes_price + 0.05
-- BUY NO if your_probability < market_yes_price - 0.05
-- SKIP if edge too small or low confidence
-- Set limit_price in cents (1-99) — your target entry price
+---
+**Analysis Process:**
 
-## Response (JSON only, no markdown)
-{{"action": "BUY" or "SKIP", "side": "YES" or "NO", "limit_price": 1-99, "confidence": 0.0-1.0, "reasoning": "Brief 2-3 sentence analysis"}}
+**Forecaster:** Analyze the market. Consider:
+- Domain-specific knowledge (sports stats, political polls, economic indicators, crypto trends)
+- Base rates and historical precedents
+- Time horizon and resolution criteria
+- Current market efficiency (is the crowd likely right?)
+Estimate the TRUE probability of YES outcome (0.0 to 1.0).
+
+**Critic:** Challenge the Forecaster:
+- What information might be missing?
+- Is the Forecaster overconfident or underconfident?
+- Are there known biases (recency, anchoring, availability)?
+- Could the market price already reflect this analysis?
+
+**Trader:** Based on the debate, output ONLY a JSON decision:
+
+{{"action": "BUY" or "SKIP", "side": "YES" or "NO", "limit_price": 1-99, "confidence": 0.0-1.0, "reasoning": "Detailed reasoning including estimated true probability, EV calculation, and key factors."}}
 """
 
 
@@ -204,6 +225,8 @@ class GeminiClient(TradingLoggerMixin):
             category=category,
             yes_price=yes_price,
             no_price=no_price,
+            yes_pct=yes_price * 100,
+            no_pct=no_price * 100,
             volume=volume,
             balance=balance,
             news_summary=news_summary[:500] if news_summary else "No additional context.",
