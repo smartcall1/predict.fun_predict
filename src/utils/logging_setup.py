@@ -37,10 +37,15 @@ def setup_logging(log_level: str = "INFO") -> None:
     # Create a "latest.log" symlink/copy for easy access
     latest_log = logs_dir / "latest.log"
 
-    # Silence noisy loggers
-    logging.getLogger("httpx").setLevel(logging.WARNING)
-    logging.getLogger("httpcore").setLevel(logging.WARNING)
-    logging.getLogger("urllib3").setLevel(logging.WARNING)
+    # Silence noisy loggers on console — full detail goes to file
+    for noisy in ["httpx", "httpcore", "urllib3",
+                   "trading_system.databasemanager",
+                   "trading_system.predictfunclient",
+                   "trading_system.market_ingestion",
+                   "trading_system.logging",
+                   "trading_system.geminiclient",
+                   "trading_system.decision_engine"]:
+        logging.getLogger(noisy).setLevel(logging.WARNING)
 
     # Configure structlog — clean, minimal output
     structlog.configure(

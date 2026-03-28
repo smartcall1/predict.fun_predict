@@ -54,7 +54,7 @@ async def scan_and_log():
     from src.utils.telegram import TelegramNotifier
     tg = TelegramNotifier()
 
-    logger.info("📡 Scanning Predict.fun markets for paper trading signals…")
+    print("[SCAN] Scanning Predict.fun markets...")
 
     client = KalshiClient()
     db = DatabaseManager()
@@ -66,26 +66,28 @@ async def scan_and_log():
         market_queue: asyncio.Queue = asyncio.Queue()
         await run_ingestion(db, market_queue)
 
-        # Drain the queue to collect ingested Market objects
         markets = []
         while not market_queue.empty():
             markets.append(market_queue.get_nowait())
 
         if not markets:
-            logger.info("No markets returned from ingestion.")
+            print("[SCAN] No eligible markets found.")
             await client.close()
             return 0
     except Exception as e:
-        logger.error(f"Ingestion failed: {e}")
+        print(f"[ERROR] Ingestion failed: {e}")
         await client.close()
         return 0
 
+    print(f"[SCAN] {len(markets)} markets to analyze...")
+
     signals_logged = 0
+    analyzed = 0
+    skipped = 0
 
     # 2. Run Gemini decision on each market
-    for market in markets:
+    for i, market in enumerate(markets):
         try:
-            # make_decision_for_market expects: Market, DatabaseManager, XAIClient, KalshiClient
             position = await make_decision_for_market(
                 market=market,
                 db_manager=db,
@@ -94,16 +96,19 @@ async def scan_and_log():
             )
 
             if position is None:
+                skipped += 1
                 continue
 
-            # position is a Position dataclass, not a dict
-            action = position.status if hasattr(position, 'status') else "open"
+            analyzed += 1
             side = position.side
             confidence = position.confidence or 0
             entry_price = position.entry_price
             rationale = position.rationale or ""
 
-            # Only log signals with meaningful confidence
+            # Show AI result (BUY or SKIP)
+            action_str = position.status if hasattr(position, 'status') else "open"
+            print(f"  [{analyzed}/{len(markets)}] {market.title[:50]} -> {side.upper()} (conf={confidence:.0%})")
+
             if confidence < settings.trading.min_confidence_to_trade:
                 continue
 
@@ -117,12 +122,8 @@ async def scan_and_log():
                 strategy=position.strategy or "directional",
             )
             signals_logged += 1
-            logger.info(
-                f"📝 Signal #{signal_id}: {side} {market.title[:60]} @ {entry_price:.2f} "
-                f"(conf={confidence:.0%}) — {rationale[:60]}"
-            )
+            print(f"  >>> SIGNAL: BUY {side.upper()} {market.title[:50]} @ {entry_price:.2f} (conf={confidence:.0%})")
 
-            # Telegram notification
             edge = confidence - entry_price if side.upper() == "YES" else confidence - (1 - entry_price)
             tg.notify_signal(
                 market_title=market.title,
@@ -134,20 +135,14 @@ async def scan_and_log():
             )
 
         except Exception as e:
-            logger.warning(f"Decision failed for market {getattr(market, 'market_id', '?')}: {e}")
+            print(f"  [ERR] {getattr(market, 'market_id', '?')}: {e}")
             continue
 
     await client.close()
     await xai.close()
-    logger.info(f"✅ Logged {signals_logged} paper signals")
+    print(f"[DONE] Signals: {signals_logged} | Analyzed: {analyzed} | Skipped: {skipped}")
 
-    # Telegram: scan complete summary
-    tg.notify_scan_complete(
-        signals=signals_logged,
-        skipped=len(markets) - signals_logged,
-        ai_cost=xai.total_cost,
-    )
-
+    tg.notify_scan_complete(signals=signals_logged, skipped=skipped, ai_cost=xai.total_cost)
     return signals_logged
 
 
