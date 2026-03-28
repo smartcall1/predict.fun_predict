@@ -22,12 +22,18 @@ Key innovations:
 
 import asyncio
 import logging
-import numpy as np
-import pandas as pd
+try:
+    import numpy as np
+    import pandas as pd
+    from scipy.optimize import minimize, minimize_scalar
+except ImportError:
+    np = None
+    pd = None
+    minimize = None
+    minimize_scalar = None
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple, NamedTuple
 from dataclasses import dataclass
-from scipy.optimize import minimize, minimize_scalar
 import warnings
 warnings.filterwarnings('ignore')
 

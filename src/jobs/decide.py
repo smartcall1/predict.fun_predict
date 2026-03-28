@@ -5,7 +5,7 @@ Supports both single-model (legacy) and multi-agent ensemble decision modes.
 
 import asyncio
 import time
-import numpy as np
+import math
 from typing import Optional, Dict, Any
 from datetime import datetime
 
@@ -604,14 +604,14 @@ def estimate_market_volatility(market: Market) -> float:
         current_price = getattr(market, 'yes_price', 50) / 100  # Convert to 0-1
         
         # Binary option volatility formula
-        intrinsic_vol = np.sqrt(current_price * (1 - current_price))
+        intrinsic_vol = math.sqrt(current_price * (1 - current_price))
         
         # Adjust based on volume (higher volume = lower volatility)
         volume_factor = max(0.5, min(2.0, 1000 / (market.volume + 100)))
         
         # Adjust based on time to expiry
         time_to_expiry = get_time_to_expiry_days(market)
-        time_factor = max(0.5, min(2.0, np.sqrt(time_to_expiry / 7)))
+        time_factor = max(0.5, min(2.0, math.sqrt(time_to_expiry / 7)))
         
         estimated_vol = intrinsic_vol * volume_factor * time_factor
         

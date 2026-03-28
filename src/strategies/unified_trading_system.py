@@ -25,7 +25,10 @@ import logging
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, asdict
-import numpy as np
+try:
+    import numpy as np
+except ImportError:
+    np = None  # Optional: not needed for paper trading core path
 
 from src.clients.kalshi_client import KalshiClient
 from src.clients.xai_client import XAIClient
