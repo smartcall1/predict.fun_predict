@@ -276,22 +276,25 @@ async def make_decision_for_market(
         # Fetch REAL prices from orderbook (listing API doesn't include prices)
         yes_price = market.yes_price
         no_price = market.no_price
+        has_orderbook = False
         try:
             prices = await kalshi_client.get_best_prices(market.market_id)
             if prices:
                 if prices.get("mid"):
                     yes_price = prices["mid"]
                     no_price = round(1.0 - yes_price, 4)
+                    has_orderbook = True
                 elif prices.get("yes_ask"):
                     yes_price = prices["yes_ask"]
                     no_price = round(1.0 - yes_price, 4)
+                    has_orderbook = True
                 logger.info(f"Orderbook price for {market.market_id}: YES={yes_price:.2f} NO={no_price:.2f}")
         except Exception as e:
             logger.debug(f"Orderbook fetch failed for {market.market_id}: {e}")
 
-        # Skip markets with no real price data (still at default 0.50)
-        if yes_price == 0.5 and no_price == 0.5:
-            logger.info(f"No price data for {market.market_id}, skipping.")
+        # Skip only if orderbook fetch failed entirely (no price data available)
+        if not has_orderbook:
+            logger.info(f"No orderbook data for {market.market_id}, skipping.")
             return None
 
         market_data = {
