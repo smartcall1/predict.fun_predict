@@ -378,7 +378,7 @@ class GeminiClient(TradingLoggerMixin):
             self.logger.error(f"JSON parse failed: {e}")
             return None
         except Exception as e:
-            self.logger.error(f"Gemini analysis failed: {e}")
+            self.logger.error(f"Gemini analysis failed: {type(e).__name__}: {e}", exc_info=True)
             return None
 
     async def search(self, query: str, max_length: int = 200) -> str:
