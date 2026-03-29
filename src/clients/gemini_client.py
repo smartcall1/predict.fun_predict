@@ -2,6 +2,7 @@
 Gemini Flash client for AI-powered trading decisions.
 Drop-in replacement for XAIClient — same interface, Gemini backend.
 
+Uses the new `google.genai` SDK (native async support).
 Provides: TradingDecision, DailyUsageTracker, GeminiClient (aliased as XAIClient)
 """
 
@@ -102,6 +103,7 @@ class GeminiClient(TradingLoggerMixin):
     """
     Gemini Flash client for AI-powered trading decisions.
     Same interface as the original XAIClient for drop-in compatibility.
+    Uses google.genai SDK with native async support.
     """
 
     def __init__(self, api_key: Optional[str] = None, db_manager=None):
@@ -118,8 +120,7 @@ class GeminiClient(TradingLoggerMixin):
         self.usage_file = "logs/daily_ai_usage.pkl"
 
         # Initialize Gemini
-        self._genai = None
-        self._model = None
+        self._client = None
         self._init_gemini()
 
         self.logger.info(
@@ -128,22 +129,13 @@ class GeminiClient(TradingLoggerMixin):
         )
 
     def _init_gemini(self):
-        """Initialize Google Generative AI client."""
+        """Initialize Google GenAI client (new SDK)."""
         if not self.api_key:
             self.logger.warning("GEMINI_API_KEY not set — dummy mode")
             return
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=self.api_key)
-            self._genai = genai
-            self._model = genai.GenerativeModel(
-                self.model_name,
-                generation_config={
-                    "temperature": settings.trading.ai_temperature,
-                    "top_p": 0.95,
-                    "max_output_tokens": 8192,  # 5-agent debate needs room for reasoning + JSON
-                },
-            )
+            from google import genai
+            self._client = genai.Client(api_key=self.api_key)
         except Exception as e:
             self.logger.error(f"Gemini init failed: {e}")
 
@@ -232,24 +224,34 @@ class GeminiClient(TradingLoggerMixin):
             news_summary=news_summary[:500] if news_summary else "No additional context.",
         )
 
-        if not self._model:
+        if not self._client:
             # Dummy mode
             self.logger.info(f"[DUMMY] Analyzing: {title[:50]}...")
             return TradingDecision(action="hold", side="yes", confidence=0.0)
 
         try:
             import asyncio
+            from google.genai import types
+
             t0 = time.time()
             response = await asyncio.wait_for(
-                asyncio.to_thread(self._model.generate_content, prompt),
+                self._client.aio.models.generate_content(
+                    model=self.model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        temperature=settings.trading.ai_temperature,
+                        top_p=0.95,
+                        max_output_tokens=8192,
+                    ),
+                ),
                 timeout=60.0,
             )
             elapsed = time.time() - t0
 
             # Cost tracking
             usage = getattr(response, "usage_metadata", None)
-            in_tok = usage.prompt_token_count if usage else 500
-            out_tok = usage.candidates_token_count if usage else 300
+            in_tok = getattr(usage, "prompt_token_count", 500) if usage else 500
+            out_tok = getattr(usage, "candidates_token_count", 300) if usage else 300
             cost = self._estimate_cost(in_tok, out_tok)
 
             self.total_cost += cost
@@ -257,16 +259,6 @@ class GeminiClient(TradingLoggerMixin):
             self.daily_tracker.total_cost += cost
             self.daily_tracker.request_count += 1
             self._save_daily_tracker()
-
-            # Log to DB if available
-            if self.db_manager and hasattr(self.db_manager, "log_ai_query"):
-                await self.db_manager.log_ai_query(
-                    model=self.model_name,
-                    query_type="trading_decision",
-                    market_id=market_data.get("market_id") or market_data.get("ticker"),
-                    cost=cost,
-                    response_time=elapsed,
-                )
 
             # Parse response — extract JSON from mixed text+JSON output
             text = response.text.strip()
