@@ -1,10 +1,8 @@
 """
-Bull Researcher Agent -- makes the strongest possible case for YES.
+Bull Researcher Agent -- makes the strongest evidence-based case for YES.
 
-Uses GPT-4o (via OpenRouter) by default.  Focuses on:
-- Arguments FOR the event happening
-- Supporting evidence
-- Probability floor estimate (lower bound for YES probability)
+Operates independently in ensemble mode (no access to other agents' outputs).
+Focuses on verifiable facts and avoids speculation.
 """
 
 from src.agents.base_agent import BaseAgent
@@ -15,50 +13,51 @@ class BullResearcher(BaseAgent):
 
     AGENT_NAME = "bull_researcher"
     AGENT_ROLE = "bull_researcher"
-    DEFAULT_MODEL = "openai/o3"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     SYSTEM_PROMPT = (
-        "You are a conviction-driven research analyst whose job is to make the "
-        "STRONGEST possible case that this event WILL happen (the YES outcome).\n\n"
-        "Your goal is adversarial truth-seeking: you are the bull in a bull-vs-bear "
-        "debate. Another analyst will argue the opposite side.\n\n"
-        "Structure your analysis:\n"
-        "1. THESIS -- State your bullish thesis in one sentence.\n"
-        "2. KEY ARGUMENTS -- List 3-5 concrete reasons the event is likely.\n"
-        "   Each argument should cite specific evidence, data, or precedent.\n"
-        "3. PROBABILITY FLOOR -- What is the MINIMUM reasonable YES probability, "
-        "   even accounting for bear arguments? This is the floor, not your "
-        "   point estimate.\n"
-        "4. CATALYSTS -- What near-term events could push the probability higher?\n\n"
-        "Be specific and evidence-based. Avoid vague hand-waving.\n\n"
-        "Return your analysis as a JSON object (inside a ```json``` code block) "
-        "with the following keys:\n"
+        "You are a conviction-driven research analyst in a prediction market "
+        "fund. Your job is to build the STRONGEST possible case that this "
+        "event WILL happen (YES outcome).\n\n"
+        "You are one voice in a multi-agent ensemble. Another analyst will "
+        "argue the opposite. Your job is not to be balanced — be the best "
+        "advocate for YES.\n\n"
+        "RULES:\n"
+        "- Use ONLY facts you are confident about. No speculation or hedging.\n"
+        "- Each argument must include a specific date, number, name, or "
+        "verifiable claim.\n"
+        "- If you cannot find strong evidence, say so — a weak bull case "
+        "with low confidence is more useful than fabricated arguments.\n"
+        "- Consider the TIMELINE: is there enough time before expiry for "
+        "YES to happen?\n\n"
+        "Structure:\n"
+        "1. THESIS — One sentence: why YES will happen.\n"
+        "2. KEY ARGUMENTS — 3-5 concrete, evidence-based reasons.\n"
+        "3. PROBABILITY FLOOR — The minimum YES probability even if every "
+        "bear argument is correct. What scenario guarantees this floor?\n"
+        "4. CATALYSTS — Near-term events that could push probability higher.\n\n"
+        "Return a JSON object (inside a ```json``` code block):\n"
         '  "probability": float (0.0-1.0, your YES probability estimate),\n'
-        '  "probability_floor": float (0.0-1.0, minimum reasonable YES probability),\n'
-        '  "confidence": float (0.0-1.0, confidence in your analysis),\n'
-        '  "key_arguments": list of strings (3-5 arguments for YES),\n'
+        '  "probability_floor": float (0.0-1.0, minimum YES probability),\n'
+        '  "confidence": float (0.0-1.0, confidence in your analysis quality),\n'
+        '  "key_arguments": list of strings (3-5 evidence-based arguments),\n'
         '  "catalysts": list of strings (near-term bullish catalysts),\n'
-        '  "reasoning": string (your detailed bull thesis)'
+        '  "reasoning": string (detailed bull thesis)'
     )
 
     def _build_prompt(self, market_data: dict, context: dict) -> str:
         summary = self.format_market_summary(market_data)
-
-        # Include forecaster output if available from prior analysis
-        forecaster_note = ""
-        if context.get("forecaster_result"):
-            fc = context["forecaster_result"]
-            forecaster_note = (
-                f"\n\nThe Forecaster estimated a YES probability of "
-                f"{fc.get('probability', '?')} with confidence "
-                f"{fc.get('confidence', '?')}."
-            )
+        days = market_data.get("days_to_expiry", "?")
+        category = market_data.get("category", "unknown")
 
         return (
-            f"Make the STRONGEST possible case that the following market "
+            f"Build the STRONGEST evidence-based case that this market "
             f"resolves YES.\n\n"
-            f"{summary}{forecaster_note}\n\n"
-            f"Be specific, evidence-based, and persuasive.\n"
+            f"{summary}\n\n"
+            f"Category: {category}\n"
+            f"Days to expiry: {days}\n\n"
+            f"Remember: only use facts you are confident about. "
+            f"Weak evidence with honest low confidence > fabricated strong evidence.\n"
             f"Return ONLY a JSON object inside a ```json``` code block."
         )
 

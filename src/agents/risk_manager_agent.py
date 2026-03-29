@@ -1,10 +1,9 @@
 """
-Risk Manager Agent -- evaluates risk/reward and recommends position sizing.
+Risk Manager Agent -- evaluates risk/reward with prediction-market-specific
+risk factors including liquidity, slippage, and time decay.
 
-Uses DeepSeek R1 (via OpenRouter) by default.  Focuses on:
-- Expected value calculation
-- Position sizing recommendation
-- Risk assessment (1-10 scale)
+Operates independently in ensemble mode and also provides its own
+probability estimate for the weighted vote.
 """
 
 from src.agents.base_agent import BaseAgent
@@ -15,78 +14,51 @@ class RiskManagerAgent(BaseAgent):
 
     AGENT_NAME = "risk_manager"
     AGENT_ROLE = "risk_manager"
-    DEFAULT_MODEL = "deepseek/deepseek-v3.2"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     SYSTEM_PROMPT = (
         "You are a quantitative risk manager for a prediction-market trading "
-        "desk. Your job is to evaluate whether a proposed trade has acceptable "
-        "risk/reward and to recommend position sizing.\n\n"
-        "You must consider:\n"
-        "1. EXPECTED VALUE (EV) -- Calculate EV = (estimated probability * payout) "
-        "   - cost. Only trades with positive EV should be taken.\n"
-        "2. RISK SCORE -- Rate the overall risk from 1 (very safe) to 10 (very "
-        "   risky). Consider: liquidity, time to expiry, volatility, information "
-        "   quality, and model disagreement.\n"
-        "3. POSITION SIZE -- Recommend what percentage of available capital to "
-        "   allocate (0-100%). Use fractional Kelly criterion logic: higher EV "
-        "   and lower risk = larger position.\n"
-        "4. WORST CASE -- What is the maximum loss, and is it acceptable?\n"
-        "5. EDGE DURABILITY -- How long will the informational edge last?\n\n"
-        "Return your analysis as a JSON object (inside a ```json``` code block) "
-        "with the following keys:\n"
-        '  "risk_score": float (1.0-10.0),\n'
-        '  "recommended_size_pct": float (0.0-100.0, percent of capital),\n'
-        '  "ev_estimate": float (expected value as a decimal, e.g. 0.15 = 15%),\n'
+        "desk on Predict.fun (BNB Chain). Your job is to independently assess "
+        "whether a trade has acceptable risk/reward.\n\n"
+        "PREDICTION MARKET EV FORMULA:\n"
+        "  BUY YES EV = P(YES) - yes_price\n"
+        "  BUY NO  EV = P(NO)  - no_price = (1 - P(YES)) - (1 - yes_price)\n"
+        "  Trade only if |EV| >= 0.05 (5% minimum edge).\n\n"
+        "RISK ASSESSMENT (rate each 1-10, then sum for total risk_score):\n"
+        "1. LIQUIDITY RISK — Volume < $5,000 → high slippage risk (+2). "
+        "Volume < $1,000 → untradeable (+5).\n"
+        "2. TIME RISK — Days to expiry < 7 → time value decay (+2). "
+        "Days < 1 → extreme risk (+3).\n"
+        "3. INFORMATION RISK — How reliable is the available information? "
+        "Crypto/sports have fast-moving info (+1-2).\n"
+        "4. PLATFORM RISK — Predict.fun on BNB Chain: consider settlement "
+        "delays, lower liquidity vs Polymarket (+1).\n\n"
+        "POSITION SIZING:\n"
+        "- Use fractional Kelly: size_pct = (edge / odds) * 0.25\n"
+        "- Never exceed 5% of portfolio on one trade.\n"
+        "- Higher risk_score → proportionally smaller size.\n\n"
+        "You must also provide your OWN independent probability estimate "
+        "to contribute to the ensemble vote.\n\n"
+        "Return a JSON object (inside a ```json``` code block):\n"
+        '  "probability": float (0.0-1.0, your independent YES probability),\n'
+        '  "risk_score": float (1.0-10.0, total risk),\n'
+        '  "recommended_size_pct": float (0.0-5.0, percent of capital),\n'
+        '  "ev_estimate": float (expected value as decimal, e.g. 0.08 = 8%),\n'
         '  "max_loss_pct": float (worst case loss as percent of position),\n'
-        '  "edge_durability_hours": float (estimated hours the edge lasts),\n'
-        '  "should_trade": boolean (true if trade meets risk criteria),\n'
-        '  "reasoning": string (detailed risk analysis)'
+        '  "edge_durability_hours": float (how long the edge lasts),\n'
+        '  "should_trade": boolean (true if risk/reward is acceptable),\n'
+        '  "reasoning": string (detailed risk analysis with each risk component)'
     )
 
     def _build_prompt(self, market_data: dict, context: dict) -> str:
         summary = self.format_market_summary(market_data)
+        volume = market_data.get("volume", 0)
+        days = market_data.get("days_to_expiry", "?")
+        yes_price = market_data.get("yes_price", "?")
+        no_price = market_data.get("no_price", "?")
+        category = market_data.get("category", "unknown")
 
-        # Build context from other agents' outputs
-        agents_section = ""
-        pieces = []
-
-        if context.get("forecaster_result"):
-            fc = context["forecaster_result"]
-            pieces.append(
-                f"Forecaster: YES prob={fc.get('probability', '?')}, "
-                f"confidence={fc.get('confidence', '?')}"
-            )
-
-        if context.get("bull_result"):
-            bull = context["bull_result"]
-            pieces.append(
-                f"Bull Researcher: YES prob={bull.get('probability', '?')}, "
-                f"floor={bull.get('probability_floor', '?')}"
-            )
-
-        if context.get("bear_result"):
-            bear = context["bear_result"]
-            pieces.append(
-                f"Bear Researcher: YES prob={bear.get('probability', '?')}, "
-                f"ceiling={bear.get('probability_ceiling', '?')}"
-            )
-
-        if context.get("news_result"):
-            news = context["news_result"]
-            pieces.append(
-                f"News Analyst: sentiment={news.get('sentiment', '?')}, "
-                f"relevance={news.get('relevance', '?')}, "
-                f"direction={news.get('impact_direction', '?')}"
-            )
-
-        if pieces:
-            agents_section = (
-                "\n\n--- OTHER AGENTS' ASSESSMENTS ---\n"
-                + "\n".join(f"- {p}" for p in pieces)
-                + "\n--- END ASSESSMENTS ---"
-            )
-
-        # Portfolio context
+        # Portfolio context if available
         portfolio_section = ""
         if context.get("portfolio"):
             pf = context["portfolio"]
@@ -97,14 +69,20 @@ class RiskManagerAgent(BaseAgent):
             )
 
         return (
-            f"Evaluate the risk/reward for the following prediction market "
-            f"trade.\n\n"
-            f"{summary}{agents_section}{portfolio_section}\n\n"
-            f"Calculate EV, assess risk, and recommend position sizing.\n"
+            f"Evaluate risk/reward for this Predict.fun trade.\n\n"
+            f"{summary}\n\n"
+            f"Category: {category}\n"
+            f"YES price: {yes_price} | NO price: {no_price}\n"
+            f"Volume (USD): ${volume:,.0f}\n"
+            f"Days to expiry: {days}\n"
+            f"{portfolio_section}\n\n"
+            f"Calculate EV, assess each risk component, recommend sizing.\n"
+            f"Also provide your independent probability estimate.\n"
             f"Return ONLY a JSON object inside a ```json``` code block."
         )
 
     def _parse_result(self, raw_json: dict) -> dict:
+        probability = self.clamp(raw_json.get("probability", 0.5))
         risk_score = self.clamp(raw_json.get("risk_score", 5.0), lo=1.0, hi=10.0)
         recommended_size_pct = self.clamp(
             raw_json.get("recommended_size_pct", 1.0), lo=0.0, hi=100.0
@@ -118,6 +96,7 @@ class RiskManagerAgent(BaseAgent):
         reasoning = str(raw_json.get("reasoning", "No reasoning provided."))
 
         return {
+            "probability": probability,
             "risk_score": risk_score,
             "recommended_size_pct": recommended_size_pct,
             "ev_estimate": ev_estimate,

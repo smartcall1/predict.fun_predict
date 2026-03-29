@@ -160,11 +160,31 @@ performance_monitoring: bool = True
 
 
 @dataclass
+class EnsembleConfig:
+    """Multi-agent ensemble decision configuration."""
+    enabled: bool = field(default_factory=lambda: os.getenv("ENSEMBLE_ENABLED", "false").lower() == "true")
+    parallel_requests: bool = True
+    min_models_for_consensus: int = 3
+    disagreement_threshold: float = 0.25
+    calibration_tracking: bool = True
+    # 역할별 모델 매핑 — Trader만 Pro, 나머지 Flash
+    agent_models: Dict[str, str] = field(default_factory=lambda: {
+        "forecaster": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "news_analyst": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "bull_researcher": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "bear_researcher": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "risk_manager": os.getenv("GEMINI_MODEL", "gemini-2.5-flash"),
+        "trader": os.getenv("ENSEMBLE_TRADER_MODEL", "gemini-3.1-pro-preview"),
+    })
+
+
+@dataclass
 class Settings:
     """Main settings class combining all configuration."""
     api: APIConfig = field(default_factory=APIConfig)
     trading: TradingConfig = field(default_factory=TradingConfig)
     logging: LoggingConfig = field(default_factory=LoggingConfig)
+    ensemble: EnsembleConfig = field(default_factory=EnsembleConfig)
 
     def validate(self) -> bool:
         """Validate configuration settings."""

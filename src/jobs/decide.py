@@ -69,56 +69,135 @@ async def _run_ensemble_decision(
 ) -> Optional[Dict]:
     """
     Run the multi-agent ensemble decision pipeline.
-    Returns a dict with action, side, confidence, limit_price, reasoning or None.
+
+    Phase 1: EnsembleRunner — 4~5 agents vote independently (gemini-2.5-flash)
+    Phase 2: TraderAgent — final verification (gemini-3.1-pro-preview)
+             Only runs if ensemble suggests a trade AND disagreement is low.
+
+    Returns a TradingDecision-compatible dict or None.
     """
     logger = get_trading_logger("ensemble_decision")
     try:
-        from src.agents.debate import DebateRunner
         from src.agents.ensemble import EnsembleRunner
+        from src.agents.trader_agent import TraderAgent
 
-        runner = DebateRunner()
+        agent_models = settings.ensemble.agent_models
 
-        # Build get_completion callables for each agent role using the model router
-        async def _make_completion(model_name):
-            async def _fn(prompt):
-                return await model_router.get_completion(
-                    prompt=prompt,
-                    model=model_name,
-                    strategy="ensemble",
-                    query_type="agent_analysis",
-                    market_id=market_data.get("ticker"),
-                )
-            return _fn
-
-        # Map agent roles to their configured models
-        model_map = settings.ensemble.models
-        completions = {}
-        for model_id, cfg in model_map.items():
-            role = cfg["role"]
-            completions[role] = await _make_completion(model_id)
-        # Trader always uses Grok-4
-        if "trader" not in completions:
-            completions["trader"] = await _make_completion("grok-4")
-
-        # Inject news into market_data for agents
-        enriched_data = {**market_data, "news_summary": news_summary}
-
-        debate_result = await runner.run_debate(
-            enriched_data, completions, context={}
+        # --- Phase 1: Independent ensemble voting ---
+        runner = EnsembleRunner(
+            min_models=settings.ensemble.min_models_for_consensus,
+            disagreement_threshold=settings.ensemble.disagreement_threshold,
         )
 
-        if debate_result.get("error"):
-            logger.warning(f"Ensemble debate had error: {debate_result['error']}")
+        # Build completion callables — each role gets its configured model
+        completions = {}
+        for role in runner.agents:
+            if role == "trader":
+                continue  # Trader runs separately in Phase 2
+            role_model = agent_models.get(role, settings.api.gemini_model)
 
-        # If debate produced a valid action, return it
-        action = debate_result.get("action", "SKIP").upper()
+            async def _make_fn(prompt, _model=role_model, _role=role):
+                return await model_router.get_completion(
+                    prompt=prompt,
+                    model=_model,
+                    strategy="ensemble",
+                    query_type=f"ensemble_{_role}",
+                    market_id=market_data.get("ticker"),
+                )
+            completions[role] = _make_fn
+
+        enriched_data = {**market_data, "news_summary": news_summary}
+        ensemble_result = await runner.run_ensemble(enriched_data, completions, context={})
+
+        if ensemble_result.get("error") or ensemble_result.get("probability") is None:
+            logger.warning(f"Ensemble failed: {ensemble_result.get('error', 'no probability')}")
+            return None
+
+        probability = ensemble_result["probability"]
+        confidence = ensemble_result["confidence"]
+        disagreement = ensemble_result["disagreement"]
+        yes_price = float(market_data.get("yes_price", 0.5))
+
+        logger.info(
+            f"Ensemble vote: prob={probability:.3f} conf={confidence:.3f} "
+            f"disagree={disagreement:.3f} market_yes={yes_price:.2f}"
+        )
+
+        # Gate: only proceed to Trader if there's edge and low disagreement
+        min_edge = settings.trading.min_edge
+        edge_yes = probability - yes_price
+        edge_no = (1 - probability) - (1 - yes_price)  # = yes_price - probability
+
+        if edge_yes >= min_edge:
+            suggested_side = "YES"
+            edge = edge_yes
+        elif edge_no >= min_edge:
+            suggested_side = "NO"
+            edge = edge_no
+        else:
+            logger.info(f"Ensemble: no edge (YES={edge_yes:+.3f}, NO={edge_no:+.3f}). SKIP.")
+            return None
+
+        if confidence < 0.50:
+            logger.info(f"Ensemble: confidence too low ({confidence:.2f}). SKIP.")
+            return None
+
+        if disagreement > settings.ensemble.disagreement_threshold:
+            logger.info(f"Ensemble: high disagreement ({disagreement:.3f}). SKIP.")
+            return None
+
+        # --- Phase 2: Trader verification (Pro model) ---
+        logger.info(
+            f"Ensemble suggests BUY {suggested_side} (edge={edge:+.3f}). "
+            f"Running Trader (Pro) for final verification..."
+        )
+
+        trader = TraderAgent()
+        trader_model = agent_models.get("trader", "gemini-3.1-pro-preview")
+
+        async def trader_completion(prompt):
+            return await model_router.get_completion(
+                prompt=prompt,
+                model=trader_model,
+                strategy="ensemble_trader",
+                query_type="ensemble_trader",
+                market_id=market_data.get("ticker"),
+            )
+
+        # Build context from ensemble model_results for the Trader
+        model_results = ensemble_result.get("model_results", [])
+        trader_context = {
+            "forecaster_result": next((r for r in model_results if r.get("_agent") == "forecaster"), None),
+            "news_result": next((r for r in model_results if r.get("_agent") == "news_analyst"), None),
+            "bull_result": next((r for r in model_results if r.get("_agent") == "bull_researcher"), None),
+            "bear_result": next((r for r in model_results if r.get("_agent") == "bear_researcher"), None),
+            "risk_result": next((r for r in model_results if r.get("_agent") == "risk_manager"), None),
+            # Ensemble meta — Trader can see the aggregate result
+            "ensemble_meta": {
+                "probability": probability,
+                "confidence": confidence,
+                "disagreement": disagreement,
+                "suggested_side": suggested_side,
+                "edge": edge,
+                "num_models": ensemble_result.get("num_models_used", 0),
+            },
+        }
+
+        trader_result = await trader.analyze(enriched_data, trader_context, trader_completion)
+
+        if trader_result.get("error"):
+            logger.warning(f"Trader verification failed: {trader_result['error']}")
+            return None
+
+        action = trader_result.get("action", "SKIP").upper()
         if action in ("BUY", "SELL"):
             logger.info(
-                f"Ensemble decision: {action} {debate_result.get('side')} "
-                f"confidence={debate_result.get('confidence'):.2f}"
+                f"Trader CONFIRMED: {action} {trader_result.get('side')} "
+                f"confidence={trader_result.get('confidence'):.2f}"
             )
-            return debate_result
+            return trader_result
 
+        logger.info(f"Trader REJECTED ensemble suggestion (action={action}). SKIP.")
         return None
 
     except Exception as e:

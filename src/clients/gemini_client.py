@@ -179,9 +179,18 @@ class GeminiClient(TradingLoggerMixin):
             return False
         return True
 
-    def _estimate_cost(self, input_tokens: int = 500, output_tokens: int = 300) -> float:
-        """Gemini Flash cost estimate. Very cheap: $0.10/1M input, $0.40/1M output."""
-        return (input_tokens / 1_000_000) * 0.10 + (output_tokens / 1_000_000) * 0.40
+    def _estimate_cost(self, input_tokens: int = 500, output_tokens: int = 300, model: str = "") -> float:
+        """Model-aware cost estimate (per 1M tokens, standard tier, ≤200K context)."""
+        model = model or self.model_name
+        if "3.1-pro" in model or "3-pro" in model:
+            # Gemini 3/3.1 Pro: $2.00 input, $12.00 output
+            return (input_tokens / 1_000_000) * 2.00 + (output_tokens / 1_000_000) * 12.00
+        elif "2.5-pro" in model:
+            # Gemini 2.5 Pro: $1.25 input, $10.00 output
+            return (input_tokens / 1_000_000) * 1.25 + (output_tokens / 1_000_000) * 10.00
+        else:
+            # Gemini 2.5 Flash (default): $0.30 input, $2.50 output
+            return (input_tokens / 1_000_000) * 0.30 + (output_tokens / 1_000_000) * 2.50
 
     # ─── Main interface (matches XAIClient) ─────────────────────
 

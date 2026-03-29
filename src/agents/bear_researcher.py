@@ -1,10 +1,8 @@
 """
-Bear Researcher Agent -- makes the strongest possible case for NO.
+Bear Researcher Agent -- argues for NO with a market-efficiency lens.
 
-Uses Gemini (via OpenRouter) by default.  Focuses on:
-- Arguments AGAINST the event happening
-- Risk factors and counterarguments
-- Probability ceiling estimate (upper bound for YES probability)
+Operates independently in ensemble mode. Combines skepticism with
+the assumption that market prices already reflect collective wisdom.
 """
 
 from src.agents.base_agent import BaseAgent
@@ -15,63 +13,61 @@ class BearResearcher(BaseAgent):
 
     AGENT_NAME = "bear_researcher"
     AGENT_ROLE = "bear_researcher"
-    DEFAULT_MODEL = "google/gemini-3-pro-preview"
+    DEFAULT_MODEL = "gemini-2.5-flash"
 
     SYSTEM_PROMPT = (
-        "You are a sceptical risk analyst whose job is to make the STRONGEST "
-        "possible case that this event will NOT happen (the NO outcome).\n\n"
-        "Your goal is adversarial truth-seeking: you are the bear in a "
-        "bull-vs-bear debate. Another analyst will argue the opposite side.\n\n"
-        "Structure your analysis:\n"
-        "1. COUNTER-THESIS -- State your bearish thesis in one sentence.\n"
-        "2. KEY ARGUMENTS -- List 3-5 concrete reasons the event is unlikely.\n"
-        "   Each argument should cite specific evidence, data, or precedent.\n"
-        "3. PROBABILITY CEILING -- What is the MAXIMUM reasonable YES probability, "
-        "   even accounting for bull arguments? This is the ceiling, not your "
-        "   point estimate.\n"
-        "4. RISK FACTORS -- What could go wrong for YES holders?\n"
-        "5. HISTORICAL PRECEDENT -- Have similar events failed before?\n\n"
-        "Be rigorous and evidence-based. Challenge every assumption.\n\n"
-        "Return your analysis as a JSON object (inside a ```json``` code block) "
-        "with the following keys:\n"
-        '  "probability": float (0.0-1.0, your YES probability estimate -- '
-        "typically lower than the bull's),\n"
-        '  "probability_ceiling": float (0.0-1.0, maximum reasonable YES probability),\n'
+        "You are a sceptical risk analyst and market-efficiency advocate "
+        "in a prediction market fund. Your dual role:\n"
+        "1. Make the STRONGEST case that this event will NOT happen (NO).\n"
+        "2. Argue that the current market price is ALREADY CORRECT or even "
+        "too generous to YES.\n\n"
+        "You are one voice in a multi-agent ensemble. A bull analyst will "
+        "argue the opposite. Your job is to be the toughest critic.\n\n"
+        "METHOD:\n"
+        "1. MARKET EFFICIENCY ARGUMENT\n"
+        "   - The market price reflects the bets of many participants.\n"
+        "   - Explain WHY the current price might already be correct.\n"
+        "   - What information is ALREADY priced in?\n\n"
+        "2. DEVIL'S ADVOCATE\n"
+        "   - Think of the 3 strongest arguments for YES.\n"
+        "   - Now refute EACH ONE with specific counter-evidence.\n\n"
+        "3. STRUCTURAL BARRIERS\n"
+        "   - What structural, logistical, or historical factors make YES "
+        "unlikely?\n"
+        "   - Cite specific precedents where similar events failed.\n\n"
+        "4. PROBABILITY CEILING\n"
+        "   - Even if every bull argument is correct, what is the MAXIMUM "
+        "reasonable YES probability?\n"
+        "   - What structural barrier creates this ceiling?\n\n"
+        "RULES:\n"
+        "- Use ONLY facts you are confident about. No speculation.\n"
+        "- Each argument must include specific evidence.\n"
+        "- A strong bear case with honest confidence > a fabricated one.\n\n"
+        "Return a JSON object (inside a ```json``` code block):\n"
+        '  "probability": float (0.0-1.0, your YES probability — typically lower),\n'
+        '  "probability_ceiling": float (0.0-1.0, max reasonable YES probability),\n'
         '  "confidence": float (0.0-1.0, confidence in your analysis),\n'
         '  "key_arguments": list of strings (3-5 arguments for NO),\n'
         '  "risk_factors": list of strings (risks for YES holders),\n'
-        '  "reasoning": string (your detailed bear thesis)'
+        '  "reasoning": string (detailed bear thesis including market-efficiency argument)'
     )
 
     def _build_prompt(self, market_data: dict, context: dict) -> str:
         summary = self.format_market_summary(market_data)
-
-        # Include bull researcher output if available
-        bull_note = ""
-        if context.get("bull_result"):
-            bull = context["bull_result"]
-            bull_args = bull.get("key_arguments", [])
-            args_str = "; ".join(bull_args[:5]) if bull_args else "N/A"
-            bull_note = (
-                f"\n\nThe Bull Researcher estimated YES probability at "
-                f"{bull.get('probability', '?')} and argued: {args_str}\n"
-                f"Counter their arguments directly."
-            )
-
-        # Include forecaster output if available
-        forecaster_note = ""
-        if context.get("forecaster_result"):
-            fc = context["forecaster_result"]
-            forecaster_note = (
-                f"\n\nThe Forecaster estimated a YES probability of "
-                f"{fc.get('probability', '?')}."
-            )
+        yes_price = market_data.get("yes_price", "?")
+        days = market_data.get("days_to_expiry", "?")
+        category = market_data.get("category", "unknown")
 
         return (
-            f"Make the STRONGEST possible case that the following market "
-            f"resolves NO.\n\n"
-            f"{summary}{forecaster_note}{bull_note}\n\n"
-            f"Challenge every assumption. Be rigorous.\n"
+            f"Make the STRONGEST case that this market resolves NO, and argue "
+            f"that the current market price is already fair or too generous.\n\n"
+            f"{summary}\n\n"
+            f"Category: {category}\n"
+            f"Current YES price: {yes_price} (this price reflects many bettors' "
+            f"collective judgement — explain why they might be right)\n"
+            f"Days to expiry: {days}\n\n"
+            f"Start by explaining why the market price could be correct, "
+            f"then build your bear case.\n"
             f"Return ONLY a JSON object inside a ```json``` code block."
         )
 
