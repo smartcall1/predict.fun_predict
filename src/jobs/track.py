@@ -30,7 +30,7 @@ async def should_exit_position(
     Returns:
         (should_exit, exit_reason, exit_price)
     """
-    current_price = current_yes_price if position.side == "YES" else current_no_price
+    current_price = current_yes_price if position.side.upper() == "YES" else current_no_price
     
     # 1. Market resolution (original logic)
     if market_status == 'closed':
@@ -67,7 +67,7 @@ async def should_exit_position(
     if position.take_profit_price:
         take_profit_triggered = False
         
-        if position.side == "YES":
+        if position.side.upper() == "YES":
             # For YES positions, take profit when price rises above target
             take_profit_triggered = current_price >= position.take_profit_price
         else:
@@ -240,7 +240,7 @@ async def run_tracking(db_manager: Optional[DatabaseManager] = None):
                     )
                 else:
                     # Log current position status for monitoring
-                    current_price = current_yes_price if position.side == "YES" else current_no_price
+                    current_price = current_yes_price if position.side.upper() == "YES" else current_no_price
                     unrealized_pnl = (current_price - position.entry_price) * position.quantity
                     hours_held = (datetime.now() - position.timestamp).total_seconds() / 3600
                     

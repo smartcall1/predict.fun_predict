@@ -248,8 +248,8 @@ class PositionLimitsManager:
         try:
             # Get available cash
             balance_response = await self.kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100
-            
+            available_cash = balance_response.get('balance', 0)
+
             # Get current positions value
             positions_response = await self.kalshi_client.get_positions()
             positions = positions_response.get('positions', []) if isinstance(positions_response, dict) else []
@@ -274,11 +274,11 @@ class PositionLimitsManager:
         """Get available cash balance."""
         try:
             balance_response = await self.kalshi_client.get_balance()
-            return balance_response.get('balance', 0) / 100
+            return balance_response.get('balance', 0)
         except Exception as e:
             self.logger.error(f"Error getting available cash: {e}")
             return 0.0
-    
+
     async def _calculate_portfolio_usage(self, portfolio_value: float) -> float:
         """Calculate current portfolio usage percentage."""
         try:

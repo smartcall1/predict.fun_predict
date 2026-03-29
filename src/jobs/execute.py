@@ -223,7 +223,7 @@ async def place_profit_taking_orders(
                     continue
                 
                 # Get current price based on position side
-                if position.side == "YES":
+                if position.side.upper() == "YES":
                     current_price = float(market_data.get('yes_price', 0))  # Predict.fun: already 0-1
                 else:
                     current_price = float(market_data.get('no_price', 0))
@@ -311,10 +311,10 @@ async def place_stop_loss_orders(
                     continue
                 
                 # Get current price based on position side
-                if position.side == "YES":
-                    current_price = market_data.get('yes_price', 0) / 100
+                if position.side.upper() == "YES":
+                    current_price = market_data.get('yes_price', 0)
                 else:
-                    current_price = market_data.get('no_price', 0) / 100
+                    current_price = market_data.get('no_price', 0)
                 
                 # Calculate current loss
                 if current_price > 0:

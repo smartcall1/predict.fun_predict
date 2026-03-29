@@ -179,9 +179,9 @@ class AutomatedPerformanceAnalyzer:
         return {
             'active_positions': len(active_positions),
             'total_contracts': sum(abs(p.get('position', 0)) for p in active_positions),
-            'available_cash': balance_response.get('balance', 0) / 100,
+            'available_cash': balance_response.get('balance', 0),
             'positions_detail': active_positions,
-            'total_portfolio_value': balance_response.get('balance', 0) / 100 + sum(
+            'total_portfolio_value': balance_response.get('balance', 0) + sum(
                 abs(p.get('position', 0)) * 0.50 for p in active_positions  # Rough position valuation
             )
         }

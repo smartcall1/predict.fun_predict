@@ -221,8 +221,8 @@ class EdgeFilter:
         avg_edge = sum(r.edge_percentage for r in edge_results) / total
         avg_confidence_adj = sum(r.confidence_adjusted_edge for r in edge_results) / total
         
-        yes_positions = sum(1 for r in edge_results if r.side == "YES")
-        no_positions = sum(1 for r in edge_results if r.side == "NO")
+        yes_positions = sum(1 for r in edge_results if r.side.upper() == "YES")
+        no_positions = sum(1 for r in edge_results if r.side.upper() == "NO")
         
         return {
             "total_opportunities": total,

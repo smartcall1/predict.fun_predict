@@ -971,11 +971,10 @@ async def _evaluate_immediate_trade(
         # Get portfolio value for position sizing
         try:
             balance_response = await kalshi_client.get_balance()
-            available_cash = balance_response.get('balance', 0) / 100  # Convert cents to dollars
-            
+            available_cash = balance_response.get('balance', 0)
+
             # Get current positions to calculate total portfolio value
-            # Kalshi API v2 returns portfolio_value in balance response (in cents)
-            total_position_value = balance_response.get('portfolio_value', 0) / 100  # Convert cents to dollars
+            total_position_value = balance_response.get('portfolio_value', 0)
 
             # Log active positions for visibility
             positions_response = await kalshi_client.get_positions()
