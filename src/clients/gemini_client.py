@@ -242,7 +242,7 @@ class GeminiClient(TradingLoggerMixin):
             t0 = time.time()
             response = await asyncio.wait_for(
                 asyncio.to_thread(self._model.generate_content, prompt),
-                timeout=30.0,
+                timeout=60.0,
             )
             elapsed = time.time() - t0
 
