@@ -303,6 +303,11 @@ async def make_decision_for_market(
         if yes_price > 0.95 or yes_price < 0.10:
             logger.info(f"No-edge price for {market.market_id} (YES={yes_price}), skipping AI analysis.")
             return None
+        # Skip near-expiry low-liquidity markets (< 24h + volume < $5000)
+        hours_to_expiry = (market.expiration_ts - time.time()) / 3600 if market.expiration_ts else 999
+        if hours_to_expiry < 24 and market.volume < 5000:
+            logger.info(f"Near-expiry low-liquidity for {market.market_id} ({hours_to_expiry:.0f}h, vol=${market.volume}), skipping.")
+            return None
 
         market_data = {
             "ticker": market.market_id, "title": market.title, "rules": rules,
