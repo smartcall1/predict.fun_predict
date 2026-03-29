@@ -210,7 +210,7 @@ async def make_decision_for_market(
 
                 if not decision:
                     pass  # Fall through to standard LLM path
-                elif decision.side == "YES" and decision.confidence >= settings.trading.high_confidence_threshold:
+                elif decision.side.upper() == "YES" and decision.confidence >= settings.trading.high_confidence_threshold:
                     logger.info(f"High-confidence YES opportunity found for {market.market_id}.")
                     
                     decision_action = "BUY"
@@ -401,14 +401,14 @@ async def make_decision_for_market(
             market.market_id, decision_action, confidence, total_analysis_cost
         )
 
-        if decision.action == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
-            price = market.yes_price if decision.side == "YES" else market.no_price
+        if decision.action.upper() == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
+            price = market.yes_price if decision.side.upper() == "YES" else market.no_price
             
             # Apply Grok4 edge filtering - 10% minimum edge requirement
             from src.utils.edge_filter import EdgeFilter
             
             # Calculate market probabilities and AI confidence
-            market_prob = market.yes_price if decision.side == "YES" else market.no_price
+            market_prob = market.yes_price if decision.side.upper() == "YES" else market.no_price
             ai_prob = decision.confidence
             
             # Check edge filter
