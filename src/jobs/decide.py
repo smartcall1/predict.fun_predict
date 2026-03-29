@@ -293,9 +293,12 @@ async def make_decision_for_market(
         except Exception as e:
             logger.debug(f"Orderbook fetch failed for {market.market_id}: {e}")
 
-        # Skip only if orderbook fetch failed entirely (no price data available)
+        # Skip if no orderbook or dust-level prices
         if not has_orderbook:
             logger.info(f"No orderbook data for {market.market_id}, skipping.")
+            return None
+        if yes_price < 0.02 or no_price < 0.02:
+            logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
 
         market_data = {
