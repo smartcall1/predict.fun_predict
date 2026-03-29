@@ -88,6 +88,7 @@ async def scan_and_log():
     # 2. Run Gemini decision on each market
     for i, market in enumerate(markets):
         try:
+            print(f"  [{i+1}/{len(markets)}] {market.title[:60]}...", end=" ", flush=True)
             position = await make_decision_for_market(
                 market=market,
                 db_manager=db,
@@ -97,9 +98,11 @@ async def scan_and_log():
 
             if position is None:
                 skipped += 1
+                print("SKIP")
                 continue
 
             analyzed += 1
+            print(f"→ BUY {position.side.upper()} (conf={position.confidence:.0%})")
             side = position.side
             confidence = position.confidence or 0
             entry_price = position.entry_price
