@@ -300,6 +300,9 @@ async def make_decision_for_market(
         if yes_price < 0.02 or no_price < 0.02:
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
+        if yes_price > 0.95 or yes_price < 0.10:
+            logger.info(f"No-edge price for {market.market_id} (YES={yes_price}), skipping AI analysis.")
+            return None
 
         market_data = {
             "ticker": market.market_id, "title": market.title, "rules": rules,
