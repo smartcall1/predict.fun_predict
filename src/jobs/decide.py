@@ -208,7 +208,9 @@ async def make_decision_for_market(
                 # Use actual cost from Gemini response
                 total_analysis_cost += getattr(decision, 'cost', 0.0)
 
-                if decision.side == "YES" and decision.confidence >= settings.trading.high_confidence_threshold:
+                if not decision:
+                    pass  # Fall through to standard LLM path
+                elif decision.side == "YES" and decision.confidence >= settings.trading.high_confidence_threshold:
                     logger.info(f"High-confidence YES opportunity found for {market.market_id}.")
                     
                     decision_action = "BUY"
