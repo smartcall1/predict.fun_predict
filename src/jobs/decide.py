@@ -402,13 +402,13 @@ async def make_decision_for_market(
         )
 
         if decision.action.upper() == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
-            price = market.yes_price if decision.side.upper() == "YES" else market.no_price
+            price = yes_price if decision.side.upper() == "YES" else no_price
             
             # Apply Grok4 edge filtering - 10% minimum edge requirement
             from src.utils.edge_filter import EdgeFilter
             
             # Calculate market probabilities and AI confidence
-            market_prob = market.yes_price if decision.side.upper() == "YES" else market.no_price
+            market_prob = yes_price if decision.side.upper() == "YES" else no_price
             ai_prob = decision.confidence
             
             # Check edge filter
