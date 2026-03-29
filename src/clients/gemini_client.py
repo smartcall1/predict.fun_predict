@@ -241,7 +241,7 @@ class GeminiClient(TradingLoggerMixin):
                     config=types.GenerateContentConfig(
                         temperature=settings.trading.ai_temperature,
                         top_p=0.95,
-                        max_output_tokens=8192,
+                        max_output_tokens=32768,
                     ),
                 ),
                 timeout=60.0,
