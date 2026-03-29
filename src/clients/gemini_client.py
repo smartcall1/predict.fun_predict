@@ -27,6 +27,7 @@ class TradingDecision:
     confidence: float    # 0.0 to 1.0
     limit_price: Optional[int] = None  # cents (0-99)
     reasoning: Optional[str] = None    # AI 분석 근거
+    cost: float = 0.0                  # 실제 API 호출 비용 (USD)
 
 
 @dataclass
@@ -370,6 +371,7 @@ class GeminiClient(TradingLoggerMixin):
                 confidence=confidence,
                 limit_price=limit_price,
                 reasoning=reasoning,
+                cost=cost,
             )
 
         except json.JSONDecodeError as e:

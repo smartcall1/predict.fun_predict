@@ -80,10 +80,10 @@ class TradingConfig:
     excluded_categories: List[str] = field(default_factory=lambda: [])
 
     # AI cost control
-    daily_ai_budget: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "5.0")))
-    daily_ai_cost_limit: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "5.0")))
+    daily_ai_budget: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "1.0")))
+    daily_ai_cost_limit: float = field(default_factory=lambda: float(os.getenv("DAILY_AI_COST_LIMIT", "1.0")))
     enable_daily_cost_limiting: bool = True
-    max_ai_cost_per_decision: float = 0.05  # Gemini Flash 분석 + 뉴스 검색 비용 포함
+    max_ai_cost_per_decision: float = 0.05  # Gemini Flash 실비용 기준 (실제 분석 1건당 ~$0.0002)
     analysis_cooldown_hours: int = 3
     max_analyses_per_market_per_day: int = 4
     sleep_when_limit_reached: bool = True

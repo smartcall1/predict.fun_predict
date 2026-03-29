@@ -205,9 +205,8 @@ async def make_decision_for_market(
                     news_summary=news_summary
                 )
                 
-                # Estimate cost for high-confidence analysis (typically lower due to shorter prompts)
-                estimated_cost = 0.01  # Rough estimate for simple analysis
-                total_analysis_cost += estimated_cost
+                # Use actual cost from Gemini response
+                total_analysis_cost += getattr(decision, 'cost', 0.0)
 
                 if decision.side == "YES" and decision.confidence >= settings.trading.high_confidence_threshold:
                     logger.info(f"High-confidence YES opportunity found for {market.market_id}.")
@@ -334,7 +333,7 @@ async def make_decision_for_market(
                         xai_client.search(market.title, max_length=200),
                         timeout=15.0
                     )
-                    estimated_search_cost = 0.02
+                    estimated_search_cost = 0.0  # 실제 비용은 Gemini 호출 시 추적
                 except asyncio.TimeoutError:
                     logger.warning(f"Search timeout for market {market.market_id}, using fallback")
                     news_summary = f"Search timeout. Analyzing {market.title} based on market data only."
@@ -346,13 +345,7 @@ async def make_decision_for_market(
 
         total_analysis_cost += estimated_search_cost
 
-        # Check if we're approaching cost limits before making the decision
-        if total_analysis_cost > settings.trading.max_ai_cost_per_decision:
-            logger.warning(f"Analysis cost ${total_analysis_cost:.3f} exceeds per-decision limit. Skipping.")
-            await db_manager.record_market_analysis(
-                market.market_id, "SKIP", 0.0, total_analysis_cost, "cost_limited"
-            )
-            return None
+        # Per-decision cost check removed — actual costs tracked via Gemini response
 
         # --- Multi-Agent Ensemble Decision (when enabled) ---
         decision = None
@@ -373,8 +366,7 @@ async def make_decision_for_market(
                 )
                 # Attach reasoning for rationale
                 decision.reasoning = ensemble_result.get("reasoning", "Multi-agent ensemble decision")
-                estimated_decision_cost = 0.10  # Ensemble uses multiple models
-                total_analysis_cost += estimated_decision_cost
+                # Ensemble cost tracked via actual API responses
             else:
                 logger.info("Ensemble returned no decision, falling back to single-model")
 
@@ -385,8 +377,7 @@ async def make_decision_for_market(
                 portfolio_data=portfolio_data,
                 news_summary=news_summary,
             )
-            estimated_decision_cost = 0.015
-            total_analysis_cost += estimated_decision_cost
+            total_analysis_cost += getattr(decision, 'cost', 0.0)
 
         if not decision:
             logger.warning(f"No decision was made for market {market.market_id}. Skipping.")
@@ -555,7 +546,7 @@ async def make_decision_for_market(
         # Record failed analysis
         try:
             await db_manager.record_market_analysis(
-                market.market_id, "ERROR", 0.0, 0.01, "error"
+                market.market_id, "ERROR", 0.0, 0.0, "error"
             )
         except:
             pass  # Don't fail on logging failure
