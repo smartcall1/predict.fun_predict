@@ -76,7 +76,7 @@ class ModelRouter(TradingLoggerMixin):
                     contents=prompt,
                     config=gen_config,
                 ),
-                timeout=90.0,
+                timeout=180.0,  # Pro 모델은 긴 컨텍스트 분석 시 시간 필요
             )
             elapsed = time.time() - t0
 
