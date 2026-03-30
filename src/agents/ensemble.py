@@ -228,6 +228,7 @@ class EnsembleRunner:
         for mr in model_results:
             role = mr.get("_agent", "unknown")
             agent_opinions[role] = {
+                "model": mr.get("_model", "unknown"),
                 "probability": mr.get("probability"),
                 "confidence": mr.get("confidence"),
                 "reasoning": (mr.get("reasoning") or "")[:300],

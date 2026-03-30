@@ -191,6 +191,20 @@ async def _run_ensemble_decision(
             return None
 
         action = trader_result.get("action", "SKIP").upper()
+
+        # Trader 결정 로깅 (Pro 모델 확인 가능)
+        log_decision(
+            market_id=market_data.get("ticker", "?"),
+            market_title=market_data.get("title", "?"),
+            action=f"TRADER_{action}",
+            side=trader_result.get("side", ""),
+            yes_price=float(market_data.get("yes_price", 0)),
+            confidence=float(trader_result.get("confidence", 0)),
+            edge=edge,
+            reasoning=trader_result.get("reasoning", "")[:500],
+            extra={"model": trader_model, "suggested_side": suggested_side},
+        )
+
         if action in ("BUY", "SELL"):
             logger.info(
                 f"Trader CONFIRMED: {action} {trader_result.get('side')} "
