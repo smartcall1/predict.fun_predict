@@ -13,6 +13,7 @@ from src.utils.database import DatabaseManager, Market, Position
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
 from src.clients.xai_client import XAIClient
+from src.utils.decision_logger import log_decision
 from src.clients.kalshi_client import KalshiClient
 from src.clients.model_router import ModelRouter
 
@@ -484,6 +485,22 @@ async def make_decision_for_market(
         logger.info(
             f"Generated decision for {market.market_id}: {decision.action} {decision.side} "
             f"at {decision.limit_price}c with confidence {decision.confidence} (cost: ${total_analysis_cost:.3f})"
+        )
+
+        # Decision log (에이전트별 의견 + 최종 결정 JSONL)
+        edge_val = confidence - (yes_price if decision.side.upper() == "YES" else no_price)
+        log_decision(
+            market_id=market.market_id,
+            market_title=market.title,
+            action=decision_action.upper(),
+            side=decision.side,
+            yes_price=yes_price,
+            no_price=no_price,
+            confidence=confidence,
+            edge=edge_val,
+            reasoning=getattr(decision, 'reasoning', '') or '',
+            ai_cost=total_analysis_cost,
+            volume=market.volume,
         )
 
         # Record the analysis

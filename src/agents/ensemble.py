@@ -22,6 +22,7 @@ from src.agents.bear_researcher import BearResearcher
 from src.agents.risk_manager_agent import RiskManagerAgent
 from src.config.settings import settings
 from src.utils.logging_setup import get_trading_logger
+from src.utils.decision_logger import log_decision
 
 logger = get_trading_logger("ensemble")
 
@@ -218,6 +219,39 @@ class EnsembleRunner:
             disagreement=round(disagreement, 4),
             models_used=len(probabilities),
             elapsed=round(elapsed, 2),
+        )
+
+        # 에이전트별 의견 + 취합 과정 JSONL 로그
+        market_title = market_data.get("title", "?")[:100]
+        market_id = market_data.get("ticker", "?")
+        agent_opinions = {}
+        for mr in model_results:
+            role = mr.get("_agent", "unknown")
+            agent_opinions[role] = {
+                "probability": mr.get("probability"),
+                "confidence": mr.get("confidence"),
+                "reasoning": (mr.get("reasoning") or "")[:300],
+                "key_arguments": mr.get("key_arguments", [])[:3],
+                "risk_score": mr.get("risk_score"),
+                "should_trade": mr.get("should_trade"),
+                "sentiment": mr.get("sentiment"),
+                "error": mr.get("error"),
+            }
+        log_decision(
+            market_id=market_id,
+            market_title=market_title,
+            action="ENSEMBLE",
+            confidence=adjusted_confidence,
+            edge=0,
+            yes_price=market_data.get("yes_price", 0),
+            no_price=market_data.get("no_price", 0),
+            reasoning=f"prob={weighted_prob:.3f} conf={adjusted_confidence:.3f} disagree={disagreement:.3f}",
+            extra={
+                "agents": agent_opinions,
+                "weighted_probability": round(weighted_prob, 4),
+                "disagreement": round(disagreement, 4),
+                "num_models": len(probabilities),
+            },
         )
 
         # Optionally record for calibration tracking
