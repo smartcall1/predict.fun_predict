@@ -26,6 +26,7 @@ from src.paper.tracker import (
     get_pending_signals,
     get_all_signals,
     get_stats,
+    has_pending_signal,
 )
 from src.paper.dashboard import generate_html
 from src.config.settings import settings
@@ -113,6 +114,11 @@ async def scan_and_log():
             print(f"  [{analyzed}/{len(markets)}] {market.title[:50]} -> {side.upper()} (conf={confidence:.0%})")
 
             if confidence < settings.trading.min_confidence_to_trade:
+                continue
+
+            # 중복 시그널 방지: 같은 마켓+사이드에 pending이 이미 있으면 스킵
+            if has_pending_signal(market.market_id, side):
+                print(f"  [DUP] Already pending: {market.title[:40]} {side.upper()}")
                 continue
 
             signal_id = log_signal(

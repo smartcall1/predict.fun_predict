@@ -222,6 +222,10 @@ async def process_and_queue_markets(
         await stats_client.close()
 
         print(f"[STATS] Done. {len(eligible_markets)} eligible (vol>=${settings.trading.min_volume}) from {len(category_filtered)} checked")
+
+        # NOTE: Predict.fun API는 만기일(endDate)을 제공하지 않아 만기 필터 적용 불가.
+        # Polymarket 버전(poly_predict)에서는 만기 필터가 적용되어 있음.
+
         for market in eligible_markets:
             await queue.put(market)
     else:
