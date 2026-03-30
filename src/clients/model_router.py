@@ -61,10 +61,12 @@ class ModelRouter(TradingLoggerMixin):
         try:
             from google.genai import types
 
+            # Ensemble agents need enough tokens for full reasoning + JSON
+            # settings.trading.ai_max_tokens (1024) is too low → reasoning gets truncated
             gen_config = types.GenerateContentConfig(
                 temperature=temperature or settings.trading.ai_temperature,
                 top_p=0.95,
-                max_output_tokens=max_tokens or settings.trading.ai_max_tokens,
+                max_output_tokens=max_tokens or 8192,
             )
 
             t0 = time.time()
