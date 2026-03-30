@@ -475,9 +475,14 @@ async def make_decision_for_market(
                 decision.reasoning = ensemble_result.get("reasoning", "Multi-agent ensemble decision")
                 # Ensemble cost tracked via actual API responses
             else:
-                logger.info("Ensemble returned no decision, falling back to single-model")
+                logger.info("Ensemble returned no decision (SKIP). Respecting ensemble verdict.")
+                # Ensemble이 SKIP하면 최종 SKIP — 단일 모델로 재분석하지 않음
+                await db_manager.record_market_analysis(
+                    market.market_id, "ENSEMBLE_SKIP", 0.0, total_analysis_cost, "ensemble_no_edge"
+                )
+                return None
 
-        # --- Fallback: Single-model decision ---
+        # --- Fallback: Single-model decision (ensemble 비활성 시에만) ---
         if decision is None:
             decision = await xai_client.get_trading_decision(
                 market_data=market_data,
