@@ -133,12 +133,17 @@ class PositionSettler:
 
         # ── P2: Take Profit (AI fair value 도달 시 익절) ─────
         # AI 추정 확률이 목표 익절 가격 (예: 10.5¢ 진입, AI 22% → 22¢에서 익절)
-        target_price = pos.get("ai_target_price")  # AI가 추정한 fair value
+        target_price = pos.get("ai_target_price")  # AI가 추정한 YES fair value
         if target_price and entry_price > 0:
-            # entry + 60% of edge에 도달하면 익절
-            edge_target = entry_price + 0.60 * (target_price - entry_price)
-            target_price = edge_target  # settler에서도 동일 공식 적용
-        if target_price and current_price >= target_price:
+            # NO side: confidence→1-confidence 변환
+            fair_value = target_price if side == "YES" else (1.0 - target_price)
+            if fair_value > entry_price:
+                edge_target = entry_price + 0.60 * (fair_value - entry_price)
+            else:
+                edge_target = None
+        else:
+            edge_target = None
+        if edge_target and current_price >= edge_target:
             # AI 추정의 90%에 도달하면 익절 (완전 도달 안 기다림)
             pnl = current_price * quantity - size_usdc
             logger.info(f"[AI_TARGET] {market_id} target={target_price:.2f} current={current_price:.2f} → +${pnl:.2f}")

@@ -185,8 +185,9 @@ async def check_settlements():
             confidence = sig.get("confidence", 0)
             side = sig.get("side", "YES").upper()
 
-            if entry > 0 and confidence > entry:
-                ai_target = entry + 0.60 * (confidence - entry)
+            effective_conf = confidence if side == "YES" else (1.0 - confidence)
+            if entry > 0 and effective_conf > entry:
+                ai_target = entry + 0.60 * (effective_conf - entry)
 
                 try:
                     prices = await client.get_best_prices(sig["market_id"])

@@ -656,9 +656,11 @@ async def make_decision_for_market(
                     live=False,
                     
                     # AI fair value 기반 익절: entry + 60% × (AI추정 - entry)
-                    # 예: 10.5¢ 진입, AI 22% → 10.5 + 0.60*(22-10.5) = 17.7¢
+                    # NO side: confidence(YES확률)를 1-confidence(NO fair value)로 변환
                     stop_loss_price=exit_strategy['stop_loss_price'],
-                    take_profit_price=min(0.99, price + 0.60 * (confidence - price)),
+                    take_profit_price=min(0.99, price + 0.60 * (
+                        (confidence if decision.side.upper() == "YES" else 1.0 - confidence) - price
+                    )),
                     max_hold_hours=exit_strategy['max_hold_hours'],
                     target_confidence_change=exit_strategy['target_confidence_change']
                 )
