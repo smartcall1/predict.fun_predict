@@ -265,6 +265,9 @@ class LiveTrader:
 
                 if result and result.get("status") in ("filled", "matched"):
                     tid = result["order_id"]
+                    # AI 추정 확률 = 익절 목표가
+                    # 예: Zverev YES @ 10.5¢ 진입, AI 추정 22.45% → 22¢에서 익절
+                    ai_target = position.confidence  # AI가 추정한 fair value
                     pos_data = {
                         "market_id": market.market_id,
                         "market_title": market.title,
@@ -273,6 +276,7 @@ class LiveTrader:
                         "quantity": position.quantity,
                         "size_usdc": result.get("trade_value", position.quantity * position.entry_price),
                         "confidence": position.confidence,
+                        "ai_target_price": ai_target,
                         "rationale": position.rationale or "",
                         "strategy": position.strategy or "directional",
                         "timestamp": time.time(),

@@ -131,11 +131,26 @@ class PositionSettler:
         # Clear void cycle counter if market still open
         self._void_cycles.pop(market_id, None)
 
-        # ── P2: Take Profit ─────────────────────
+        # ── P2: Take Profit (AI fair value 도달 시 익절) ─────
+        # AI 추정 확률이 목표 익절 가격 (예: 10.5¢ 진입, AI 22% → 22¢에서 익절)
+        target_price = pos.get("ai_target_price")  # AI가 추정한 fair value
+        if target_price and current_price >= target_price * 0.90:
+            # AI 추정의 90%에 도달하면 익절 (완전 도달 안 기다림)
+            pnl = current_price * quantity - size_usdc
+            logger.info(f"[AI_TARGET] {market_id} target={target_price:.2f} current={current_price:.2f} → +${pnl:.2f}")
+            return {
+                "action": "SELL",
+                "reason": f"ai_target_{target_price:.2f}",
+                "exit_price": current_price,
+                "pnl": pnl,
+                "current_price": current_price,
+            }
+
+        # Fallback: ROI 기반 익절 (ai_target_price 없는 경우)
         if entry_price > 0:
             roi = (current_price - entry_price) / entry_price
             if roi >= self.take_profit_pct:
-                pnl = current_price * quantity - size_usdc  # H5: size_usdc 기반
+                pnl = current_price * quantity - size_usdc
                 logger.info(f"[TAKE_PROFIT] {market_id} ROI={roi:.1%} → +${pnl:.2f}")
                 return {
                     "action": "SELL",
