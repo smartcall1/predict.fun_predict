@@ -279,7 +279,10 @@ class LiveTrader:
                     }
                     self.state.add_position(tid, pos_data)
                     self.state.bankroll -= pos_data["size_usdc"]
-                    self.state.record_ai_cost(getattr(self.gemini, "total_cost", 0))
+                    # H4 fix: Gemini의 마지막 분석 비용만 기록 (누적값 X)
+                    last_cost = getattr(self.gemini, '_last_decision_cost', 0.0)
+                    if last_cost > 0:
+                        self.state.record_ai_cost(last_cost)
 
                     self.tg.notify_trade(
                         side=position.side,
@@ -331,21 +334,32 @@ class LiveTrader:
                     if not sell_result:
                         continue
 
-                # Update state
+                # Update state — bankroll 회계 (C4 fix)
+                # 매수 시 size_usdc를 차감했으므로, 정산 시 회수액을 더함
+                size_usdc = pos.get("size_usdc", 0)
+                quantity = pos.get("quantity", 0)
+
                 if action == "WIN":
+                    # 마켓 정산 승리: payout = quantity * $1.0
+                    payout = quantity * 1.0
                     self.state.record_win(pnl)
-                    self.state.bankroll += pos.get("size_usdc", 0) + pnl
+                    self.state.bankroll += payout
                 elif action == "LOSS":
+                    # 마켓 정산 패배: payout = 0 (이미 차감됨)
                     self.state.record_loss(pnl)
+                    # bankroll 변동 없음 — 원금은 이미 매수 시 차감됨
                 elif action == "VOID":
+                    # 취소/환불: 원금 반환
                     self.state.record_void()
-                    self.state.bankroll += pos.get("size_usdc", 0)
+                    self.state.bankroll += size_usdc
                 elif action == "SELL":
+                    # 조기 청산: exit_price * quantity 회수
+                    proceeds = exit_price * quantity
                     if pnl >= 0:
                         self.state.record_win(pnl)
                     else:
                         self.state.record_loss(pnl)
-                    self.state.bankroll += pos.get("size_usdc", 0) + pnl
+                    self.state.bankroll += proceeds
 
                 # Remove position
                 self.state.remove_position(tid)

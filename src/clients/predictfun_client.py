@@ -395,8 +395,10 @@ class PredictFunClient(TradingLoggerMixin):
                 }
             }
 
-        # TODO: implement live order via predict-sdk
-        raise PredictFunAPIError("Live trading not yet implemented")
+        raise PredictFunAPIError(
+            "Live trading not yet implemented. "
+            "Use paper mode or implement Predict.fun order API here."
+        )
 
     async def cancel_order(self, order_id: str) -> Dict[str, Any]:
         """Cancel order."""

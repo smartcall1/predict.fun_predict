@@ -53,6 +53,7 @@ def run():
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         print(f"[WATCHDOG] [{now}] Spawning bot (restart #{restart_count})...")
 
+        proc = None  # L3: KeyboardInterrupt 전에 정의되도록 초기화
         try:
             with open(LOG_FILE, "a", encoding="utf-8") as log_f:
                 log_f.write(f"\n{'='*60}\n")
@@ -80,11 +81,12 @@ def run():
 
         except KeyboardInterrupt:
             print("\n[WATCHDOG] KeyboardInterrupt — stopping")
-            try:
-                proc.terminate()
-                proc.wait(timeout=5)
-            except Exception:
-                proc.kill()
+            if proc:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=5)
+                except Exception:
+                    proc.kill()
             break
 
         except Exception as e:

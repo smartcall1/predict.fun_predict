@@ -55,7 +55,7 @@ class LiveExecutor:
 
             result = await self.client.place_order(
                 ticker=market_id,
-                client_order_id=f"ai_{int(time.time())}_{market_id}",
+                client_order_id=f"ai_{time.time_ns()}_{market_id[:8]}",
                 side=side.lower(),
                 action="buy",
                 count=quantity,

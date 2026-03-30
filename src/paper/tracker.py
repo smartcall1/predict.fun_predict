@@ -77,23 +77,14 @@ def get_connection() -> sqlite3.Connection:
 def has_pending_signal(market_id: str, side: str) -> bool:
     """같은 market_id + side에 pending 시그널이 이미 있는지 확인."""
     conn = get_connection()
-    row = conn.execute(
-        "SELECT COUNT(*) FROM signals WHERE market_id=? AND side=? AND outcome='pending'",
-        (market_id, side),
-    ).fetchone()
-    conn.close()
-    return row[0] > 0
-
-
-def has_pending_signal(market_id: str, side: str) -> bool:
-    """같은 market_id + side에 pending 시그널이 이미 있는지 확인."""
-    conn = get_connection()
-    row = conn.execute(
-        "SELECT COUNT(*) FROM signals WHERE market_id=? AND side=? AND outcome='pending'",
-        (market_id, side),
-    ).fetchone()
-    conn.close()
-    return row[0] > 0
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) FROM signals WHERE market_id=? AND side=? AND outcome='pending'",
+            (market_id, side),
+        ).fetchone()
+        return row[0] > 0
+    finally:
+        conn.close()
 
 
 def log_signal(
@@ -107,70 +98,66 @@ def log_signal(
 ) -> int:
     """Record a new paper-trading signal. Returns the signal id."""
     conn = get_connection()
-    cur = conn.execute(
-        """INSERT INTO signals
-           (timestamp, market_id, market_title, side, entry_price, confidence, reasoning, strategy)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            datetime.now(timezone.utc).isoformat(),
-            market_id,
-            market_title,
-            side,
-            entry_price,
-            confidence,
-            reasoning,
-            strategy,
-        ),
-    )
-    conn.commit()
-    signal_id = cur.lastrowid
-    conn.close()
-    return signal_id
+    try:
+        cur = conn.execute(
+            """INSERT INTO signals
+               (timestamp, market_id, market_title, side, entry_price, confidence, reasoning, strategy)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                datetime.now(timezone.utc).isoformat(),
+                market_id,
+                market_title,
+                side,
+                entry_price,
+                confidence,
+                reasoning,
+                strategy,
+            ),
+        )
+        conn.commit()
+        return cur.lastrowid
+    finally:
+        conn.close()
 
 
 def settle_signal(signal_id: int, settlement_price: float):
     """
     Mark a signal as settled.
-    For NO side: profit = entry_price - settlement_price  (you bought NO at entry_price)
-    Actually on Kalshi: buying NO at price p means you pay p, and receive $1 if NO wins.
-    So PnL = (1 - entry_price) if NO wins, else -entry_price.
+    PnL = (1 - entry_price) if win, else -entry_price.
     """
     conn = get_connection()
-    row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
-    if not row:
+    try:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+        if not row:
+            return
+
+        side = row["side"]
+        entry = row["entry_price"]
+
+        if side.upper() == "NO":
+            if settlement_price < 0.5:  # M2: 경계값 명확화 (< not <=)
+                pnl = 1.0 - entry
+                outcome = "win"
+            else:
+                pnl = -entry
+                outcome = "loss"
+        else:
+            if settlement_price > 0.5:  # M2: 경계값 명확화 (> not >=)
+                pnl = 1.0 - entry
+                outcome = "win"
+            else:
+                pnl = -entry
+                outcome = "loss"
+
+        conn.execute(
+            """UPDATE signals
+               SET outcome = ?, settlement_price = ?, pnl = ?, settled_at = ?
+               WHERE id = ?""",
+            (outcome, settlement_price, round(pnl, 4), datetime.now(timezone.utc).isoformat(), signal_id),
+        )
+        conn.commit()
+    finally:
         conn.close()
-        return
-
-    side = row["side"]
-    entry = row["entry_price"]
-
-    if side.upper() == "NO":
-        # settlement_price is the YES settlement (1.0 if YES wins, 0.0 if NO wins)
-        if settlement_price <= 0.5:
-            # NO wins
-            pnl = 1.0 - entry
-            outcome = "win"
-        else:
-            # YES wins → NO loses
-            pnl = -entry
-            outcome = "loss"
-    else:
-        # YES side
-        if settlement_price >= 0.5:
-            pnl = 1.0 - entry
-            outcome = "win"
-        else:
-            pnl = -entry
-            outcome = "loss"
-
-    conn.execute(
-        """UPDATE signals
-           SET outcome = ?, settlement_price = ?, pnl = ?, settled_at = ?
-           WHERE id = ?""",
-        (outcome, settlement_price, round(pnl, 4), datetime.now(timezone.utc).isoformat(), signal_id),
-    )
-    conn.commit()
-    conn.close()
 
 
 def get_pending_signals() -> List[Dict]:

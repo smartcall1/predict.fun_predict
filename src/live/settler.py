@@ -108,7 +108,7 @@ class PositionSettler:
 
             if won:
                 payout = quantity * 1.0
-                pnl = payout - size_usdc
+                pnl = payout - size_usdc  # H5: size_usdc 기반 (실제 투입 비용)
                 logger.info(f"[WIN] {market_id} {side} → +${pnl:.2f}")
                 return {
                     "action": "WIN",
@@ -118,7 +118,7 @@ class PositionSettler:
                     "current_price": 1.0,
                 }
             else:
-                pnl = -size_usdc
+                pnl = -size_usdc  # H5: size_usdc 기반 (실제 투입 비용)
                 logger.info(f"[LOSS] {market_id} {side} → ${pnl:.2f}")
                 return {
                     "action": "LOSS",
@@ -135,7 +135,7 @@ class PositionSettler:
         if entry_price > 0:
             roi = (current_price - entry_price) / entry_price
             if roi >= self.take_profit_pct:
-                pnl = (current_price - entry_price) * quantity
+                pnl = current_price * quantity - size_usdc  # H5: size_usdc 기반
                 logger.info(f"[TAKE_PROFIT] {market_id} ROI={roi:.1%} → +${pnl:.2f}")
                 return {
                     "action": "SELL",

@@ -103,7 +103,6 @@ async def scan_and_log():
                 continue
 
             analyzed += 1
-            print(f"→ BUY {position.side.upper()} (conf={position.confidence:.0%})")
             side = position.side
             confidence = position.confidence or 0
             entry_price = position.entry_price

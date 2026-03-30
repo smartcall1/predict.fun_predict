@@ -640,7 +640,7 @@ async def make_decision_for_market(
             await db_manager.record_market_analysis(
                 market.market_id, "ERROR", 0.0, 0.0, "error"
             )
-        except:
+        except Exception:
             pass  # Don't fail on logging failure
         return None
 
@@ -741,11 +741,7 @@ def get_time_to_expiry_days(market: Market) -> float:
     try:
         if hasattr(market, 'expiration_ts') and market.expiration_ts:
             return max(0.1, (market.expiration_ts - time.time()) / 86400)
-        elif hasattr(market, 'expiration_ts') and market.expiration_ts:
-            expiry_time = datetime.fromtimestamp(market.expiration_ts)
-            return max(0.1, (expiry_time - datetime.now()).total_seconds() / 86400)
-        else:
-            return 7.0  # Default 7 days
+        return 7.0
     except Exception as e:
         logger.error(f"Error calculating time to expiry: {e}")
         return 7.0

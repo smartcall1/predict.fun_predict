@@ -8,16 +8,18 @@ polymarket_trader_bot의 state_LIVE.json 패턴 차용.
 import json
 import os
 import time
+import logging
 import threading
 from typing import Dict, List, Optional, Any
-from datetime import datetime
+from datetime import datetime, timezone
 
 
 STATE_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "data")
+logger = logging.getLogger("state_manager")
 
 
 class StateManager:
-    """JSON-based state persistence for live trading."""
+    """JSON-based state persistence for live trading. Thread-safe."""
 
     def __init__(self, mode: str = "LIVE"):
         self.mode = mode.upper()
@@ -43,7 +45,7 @@ class StateManager:
                 "total_ai_cost": 0.0,
             },
             "last_updated": None,
-            "started_at": datetime.utcnow().isoformat(),
+            "started_at": datetime.now(timezone.utc).isoformat(),
         }
 
     def _load(self) -> Dict:
@@ -61,8 +63,15 @@ class StateManager:
                             if sk not in data["stats"]:
                                 data["stats"][sk] = sv
                     return data
-            except Exception:
-                pass
+            except Exception as e:
+                # L5: 조용한 실패 대신 경고 + 손상 파일 백업
+                logger.warning(f"State file corrupted, backing up: {e}")
+                try:
+                    backup = self.state_file + ".corrupted"
+                    os.rename(self.state_file, backup)
+                    logger.warning(f"Corrupted state backed up to {backup}")
+                except Exception:
+                    pass
         return self._default_state()
 
     def save(self):
@@ -81,24 +90,30 @@ class StateManager:
 
     @property
     def bankroll(self) -> float:
-        return self.state.get("bankroll", 0.0)
+        with self._lock:
+            return self.state.get("bankroll", 0.0)
 
     @bankroll.setter
     def bankroll(self, value: float):
-        self.state["bankroll"] = round(value, 4)
-        if value > self.state.get("peak_bankroll", 0):
-            self.state["peak_bankroll"] = round(value, 4)
+        with self._lock:
+            self.state["bankroll"] = round(value, 4)
+            if value > self.state.get("peak_bankroll", 0):
+                self.state["peak_bankroll"] = round(value, 4)
 
     def init_bankroll(self, amount: float):
-        if self.state.get("initial_bankroll", 0) == 0:
-            self.state["initial_bankroll"] = amount
-        self.bankroll = amount
+        with self._lock:
+            if self.state.get("initial_bankroll", 0) == 0:
+                self.state["initial_bankroll"] = amount
+            self.state["bankroll"] = round(amount, 4)
+            if amount > self.state.get("peak_bankroll", 0):
+                self.state["peak_bankroll"] = round(amount, 4)
 
     # ── Positions ───────────────────────────────
 
     @property
     def positions(self) -> Dict[str, Dict]:
-        return self.state.get("positions", {})
+        with self._lock:
+            return dict(self.state.get("positions", {}))
 
     def add_position(self, tid: str, pos: Dict):
         with self._lock:
@@ -110,28 +125,34 @@ class StateManager:
             return self.state["positions"].pop(tid, None)
 
     def get_position(self, tid: str) -> Optional[Dict]:
-        return self.state["positions"].get(tid)
+        with self._lock:
+            return self.state["positions"].get(tid)
 
     @property
     def position_count(self) -> int:
-        return len(self.state.get("positions", {}))
+        with self._lock:
+            return len(self.state.get("positions", {}))
 
     # ── Stats ───────────────────────────────────
 
     @property
     def stats(self) -> Dict:
-        return self.state.get("stats", {})
+        with self._lock:
+            return dict(self.state.get("stats", {}))
 
     def record_win(self, pnl: float):
-        self.state["stats"]["wins"] += 1
-        self.state["stats"]["total_pnl"] += pnl
+        with self._lock:
+            self.state["stats"]["wins"] += 1
+            self.state["stats"]["total_pnl"] += pnl
 
     def record_loss(self, pnl: float):
-        self.state["stats"]["losses"] += 1
-        self.state["stats"]["total_pnl"] += pnl
+        with self._lock:
+            self.state["stats"]["losses"] += 1
+            self.state["stats"]["total_pnl"] += pnl
 
     def record_void(self):
-        self.state["stats"]["voids"] += 1
+        with self._lock:
+            self.state["stats"]["voids"] += 1
 
     def record_ai_cost(self, cost: float):
         self.state["stats"]["total_ai_cost"] += cost
