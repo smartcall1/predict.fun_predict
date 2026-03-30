@@ -655,10 +655,10 @@ async def make_decision_for_market(
                     confidence=confidence,
                     live=False,
                     
-                    # AI fair value를 익절 목표가로 사용 (기존 ROI 기반 대체)
-                    # 예: 10.5¢ 진입, AI 추정 22% → 20¢(90%)에서 익절
+                    # AI fair value 기반 익절: entry + 60% × (AI추정 - entry)
+                    # 예: 10.5¢ 진입, AI 22% → 10.5 + 0.60*(22-10.5) = 17.7¢
                     stop_loss_price=exit_strategy['stop_loss_price'],
-                    take_profit_price=min(0.99, confidence * 0.90),
+                    take_profit_price=min(0.99, price + 0.60 * (confidence - price)),
                     max_hold_hours=exit_strategy['max_hold_hours'],
                     target_confidence_change=exit_strategy['target_confidence_change']
                 )
