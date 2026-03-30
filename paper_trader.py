@@ -62,6 +62,10 @@ async def scan_and_log():
     await db.initialize()
     xai = XAIClient(db_manager=db)
 
+    # Ensemble 모드: ModelRouter 생성 (ENSEMBLE_ENABLED=true일 때 5인방 + Pro 체제)
+    from src.clients.model_router import ModelRouter
+    model_router = ModelRouter(xai_client=xai, db_manager=db) if settings.ensemble.enabled else None
+
     # 1. Ingest fresh market data
     try:
         market_queue: asyncio.Queue = asyncio.Queue()
@@ -95,6 +99,7 @@ async def scan_and_log():
                 db_manager=db,
                 xai_client=xai,
                 kalshi_client=client,
+                model_router=model_router,
             )
 
             if position is None:
