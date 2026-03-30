@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from src.paper.tracker import (
     log_signal,
     settle_signal,
+    take_profit_signal,
     get_pending_signals,
     get_all_signals,
     get_stats,
@@ -179,6 +180,35 @@ async def check_settlements():
 
     for sig in pending:
         try:
+            # ── 익절 체크: AI 목표가 도달 시 조기 정산 ──
+            entry = sig.get("entry_price", 0)
+            confidence = sig.get("confidence", 0)
+            side = sig.get("side", "YES").upper()
+
+            if entry > 0 and confidence > entry:
+                ai_target = entry + 0.60 * (confidence - entry)
+
+                try:
+                    prices = await client.get_best_prices(sig["market_id"])
+                    if prices and prices.get("mid"):
+                        current_yes = prices["mid"]
+                        current_price = current_yes if side == "YES" else (1.0 - current_yes)
+
+                        if current_price >= ai_target:
+                            take_profit_signal(sig["id"], current_price)
+                            pnl = current_price - entry
+                            logger.info(f"💰 TAKE PROFIT #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (target={ai_target:.2f}, PnL={pnl:+.2f})")
+                            tg.notify_settlement(
+                                market_title=sig.get("market_title", ""),
+                                side=sig["side"], entry_price=entry,
+                                exit_price=current_price, pnl=pnl, result="WIN",
+                            )
+                            settled_count += 1
+                            continue
+                except Exception as e:
+                    logger.debug(f"Price check failed for {sig['market_id']}: {e}")
+
+            # ── 마켓 정산 체크 (기존 로직) ──
             response = await client.get_market(ticker=sig["market_id"])
             market_data = response.get("market", {}) if isinstance(response, dict) else {}
 

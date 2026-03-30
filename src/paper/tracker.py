@@ -160,6 +160,38 @@ def settle_signal(signal_id: int, settlement_price: float):
         conn.close()
 
 
+def take_profit_signal(signal_id: int, exit_price: float):
+    """
+    익절로 시그널 정산. 마켓 종료 전 AI 목표가 도달 시 사용.
+    PnL = exit_price - entry_price (YES) 또는 entry_price - exit_price (NO 방향은 1-exit)
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+        if not row:
+            return
+
+        side = row["side"]
+        entry = row["entry_price"]
+
+        if side.upper() == "YES":
+            pnl = exit_price - entry
+        else:
+            # NO side: entry는 NO 가격, exit도 NO 가격 기준
+            pnl = exit_price - entry
+
+        outcome = "win" if pnl > 0 else "loss"
+
+        conn.execute(
+            """UPDATE signals SET outcome=?, settlement_price=?, pnl=?, settled_at=? WHERE id=?""",
+            (outcome, exit_price, round(pnl, 4),
+             datetime.now(timezone.utc).isoformat(), signal_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
 def get_pending_signals() -> List[Dict]:
     conn = get_connection()
     rows = conn.execute("SELECT * FROM signals WHERE outcome = 'pending' ORDER BY timestamp").fetchall()
