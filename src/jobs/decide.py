@@ -394,8 +394,8 @@ async def make_decision_for_market(
         if yes_price < 0.02 or no_price < 0.02:
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
-        if yes_price > 0.95 or yes_price < 0.10:
-            logger.info(f"No-edge price for {market.market_id} (YES={yes_price}), skipping AI analysis.")
+        if yes_price > 0.90 or yes_price < 0.10:
+            logger.info(f"No-edge price for {market.market_id} (YES={yes_price}, NO={1-yes_price:.2f}), skipping AI analysis.")
             return None
         # Skip near-expiry low-liquidity markets (< 24h + volume < $5000)
         hours_to_expiry = (market.expiration_ts - time.time()) / 3600 if market.expiration_ts else 999
@@ -535,7 +535,33 @@ async def make_decision_for_market(
 
         if decision.action.upper() == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
             price = yes_price if decision.side.upper() == "YES" else no_price
-            
+
+            # ── Filter: 단기 스포츠 마켓 edge 강화 ──
+            # 타이틀에 날짜 패턴(YYYY MM DD) + 스포츠 키워드 → min_edge 15%
+            import re
+            _SPORTS_KW = re.compile(
+                r'\b(Nba|Nfl|Nhl|Mlb|Mls|Lol|Csgo|Cs2|Dota|Valorant|Atp|Wta|Ufc|'
+                r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl)\b',
+                re.IGNORECASE,
+            )
+            _DATE_IN_TITLE = re.compile(r'20\d{2}\s+\d{2}\s+\d{2}')
+            _title = market.title or ""
+            is_sports_shortterm = bool(_SPORTS_KW.search(_title) and _DATE_IN_TITLE.search(_title))
+            if is_sports_shortterm:
+                sports_min_edge = 0.15
+                actual_edge = abs(confidence - yes_price) if decision.side.upper() == "YES" else abs((1.0 - confidence) - no_price)
+                if actual_edge < sports_min_edge:
+                    logger.info(
+                        f"⚽ SPORTS FILTER: {market.market_id} edge={actual_edge:.3f} < {sports_min_edge} "
+                        f"(short-term sports). SKIP."
+                    )
+                    await db_manager.record_market_analysis(
+                        market.market_id, "SPORTS_FILTERED", confidence, total_analysis_cost,
+                        f"short_term_sports_edge_{actual_edge:.3f}"
+                    )
+                    return None
+                logger.info(f"⚽ SPORTS PASS: {market.market_id} edge={actual_edge:.3f} >= {sports_min_edge}")
+
             # Apply Grok4 edge filtering - 10% minimum edge requirement
             from src.utils.edge_filter import EdgeFilter
             
