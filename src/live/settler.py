@@ -156,8 +156,19 @@ class PositionSettler:
                 "pnl": pnl,
                 "current_price": current_price,
             }
-        # NOTE: ROI 기반 fallback 제거됨 — AI fair value 익절만 사용
-        # ai_target_price는 live_trader.py에서 position.confidence로 항상 저장됨
+        # Fallback: ai_target_price 없는 레거시 포지션용 ROI 기반 익절
+        if not target_price and entry_price > 0:
+            roi = (current_price - entry_price) / entry_price
+            if roi >= self.take_profit_pct:
+                pnl = current_price * quantity - size_usdc
+                logger.info(f"[TAKE_PROFIT_LEGACY] {market_id} ROI={roi:.1%} (no ai_target) → +${pnl:.2f}")
+                return {
+                    "action": "SELL",
+                    "reason": f"take_profit_legacy_{roi:.0%}",
+                    "exit_price": current_price,
+                    "pnl": pnl,
+                    "current_price": current_price,
+                }
 
         # ── P2-A: Near certainty (price >= 0.95) ──
         if current_price >= 0.95:

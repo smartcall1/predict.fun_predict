@@ -287,14 +287,20 @@ class LiveTrader:
                     if last_cost > 0:
                         self.state.record_ai_cost(last_cost)
 
+                    entry_p = result.get("entry_price", position.entry_price)
+                    if position.side.upper() == "YES":
+                        trade_edge = position.confidence - entry_p
+                    else:
+                        trade_edge = (1.0 - position.confidence) - (1.0 - entry_p)
                     self.tg.notify_trade(
                         side=position.side,
                         market_title=market.title,
-                        price=result.get("entry_price", position.entry_price),
+                        price=entry_p,
                         confidence=position.confidence,
                         quantity=position.quantity,
                         reasoning=(position.rationale or "")[:150],
                         ai_target=position.confidence,
+                        edge=trade_edge,
                     )
                     trades_made += 1
                     logger.info(f"Trade #{trades_made}: BUY {position.side} {market.title[:40]}")
