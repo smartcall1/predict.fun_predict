@@ -46,19 +46,28 @@ class TelegramNotifier:
     # ── Trade notifications ──────────────────────
 
     def notify_signal(self, market_title: str, side: str, entry_price: float,
-                      confidence: float, reasoning: str, edge: float = 0):
-        """Paper trade signal notification."""
-        side_emoji = "\U0001f7e2" if side.upper() == "YES" else "\U0001f534"  # green/red circle
+                      confidence: float, reasoning: str, edge: float = 0,
+                      ai_target: float = 0):
+        """Paper trade signal notification — 간결한 Result 형식."""
+        side_emoji = "\U0001f7e2" if side.upper() == "YES" else "\U0001f534"
+        # AI fair value 기반 목표가 계산
+        if ai_target > 0:
+            fair_value = ai_target if side.upper() == "YES" else (1.0 - ai_target)
+            target_price = entry_price + 0.60 * max(0, fair_value - entry_price)
+            target_str = f"{target_price:.2f} ({target_price*100:.0f}%)"
+        else:
+            target_str = "-"
+        # Reasoning 첫 문장만 추출 (마침표/줄바꿈 기준)
+        short_reason = reasoning.split(".")[0].split("\n")[0].strip()[:120] if reasoning else "-"
         self.send(
-            f"{side_emoji} <b>AI Signal: BUY {side.upper()}</b>\n"
+            f"{side_emoji} <b>BUY {side.upper()}</b>\n"
             f"\n"
             f"<b>Market:</b> {self._esc(market_title[:100])}\n"
-            f"<b>Entry:</b> {entry_price:.2f} ({entry_price*100:.0f}%)\n"
-            f"<b>Confidence:</b> {confidence:.0%}\n"
-            f"<b>Edge:</b> {edge:+.1%}\n"
-            f"<b>Reasoning:</b> {self._esc(reasoning[:200])}\n"
+            f"<b>Entry:</b> {entry_price:.2f} | <b>Target:</b> {target_str}\n"
+            f"<b>Confidence:</b> {confidence:.0%} | <b>Edge:</b> {edge:+.1%}\n"
+            f"<b>Result:</b> {self._esc(short_reason)}\n"
             f"\n"
-            f"\U0001f4dd <i>Paper Trade (Predict.fun AI Bot)</i>"
+            f"\U0001f4dd <i>Paper Trade</i>"
         )
 
     def notify_settlement(self, market_title: str, side: str, entry_price: float,

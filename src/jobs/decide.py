@@ -154,7 +154,7 @@ async def _run_ensemble_decision(
         )
 
         trader = TraderAgent()
-        trader_model = agent_models.get("trader", "gemini-3.1-pro-preview")
+        trader_model = agent_models.get("trader", "gemini-2.5-pro")
 
         async def trader_completion(prompt):
             return await model_router.get_completion(
@@ -507,7 +507,13 @@ async def make_decision_for_market(
         )
 
         # Decision log (에이전트별 의견 + 최종 결정 JSONL)
-        edge_val = confidence - (yes_price if decision.side.upper() == "YES" else no_price)
+        # Edge = AI확률(side 기준) - 시장가격(side 기준)
+        # YES: edge = confidence - yes_price
+        # NO:  edge = (1-confidence) - (1-yes_price) = yes_price - confidence
+        if decision.side.upper() == "YES":
+            edge_val = confidence - yes_price
+        else:
+            edge_val = (1.0 - confidence) - no_price
         log_decision(
             market_id=market.market_id,
             market_title=market.title,

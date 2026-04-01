@@ -294,6 +294,7 @@ class LiveTrader:
                         confidence=position.confidence,
                         quantity=position.quantity,
                         reasoning=(position.rationale or "")[:150],
+                        ai_target=position.confidence,
                     )
                     trades_made += 1
                     logger.info(f"Trade #{trades_made}: BUY {position.side} {market.title[:40]}")

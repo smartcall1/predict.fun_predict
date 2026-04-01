@@ -5,7 +5,8 @@ Position Settler — Predict.fun
   P0: 마켓 종료 (tradingStatus=CLOSED + resolution)
   P0-V: VOID 감지 (cancelled/refund)
   P1: 자연 정산 (YES/NO winner 확정)
-  P2: 익절 (ROI >= take_profit_pct)
+  P2: 익절 (AI fair value의 60% 도달)
+  P2-A: Near certainty (price >= 0.95)
   P3: 손절 (ROI <= -stop_loss_pct)
   P4: 시간 만료 (max_hold_hours 초과)
 """
@@ -131,11 +132,12 @@ class PositionSettler:
         # Clear void cycle counter if market still open
         self._void_cycles.pop(market_id, None)
 
-        # ── P2: Take Profit (AI fair value 도달 시 익절) ─────
-        # AI 추정 확률이 목표 익절 가격 (예: 10.5¢ 진입, AI 22% → 22¢에서 익절)
+        # ── P2: Take Profit (AI fair value의 60% 도달 시 익절) ─────
+        # ai_target_price = AI 앙상블이 추정한 YES fair value (항상 저장됨)
+        # 예) 진입 10.5¢, AI추정 22% → edge_target = 0.105 + 0.60*(0.22-0.105) = 0.174
         target_price = pos.get("ai_target_price")  # AI가 추정한 YES fair value
         if target_price and entry_price > 0:
-            # NO side: confidence→1-confidence 변환
+            # NO side: YES확률 → NO fair value로 변환
             fair_value = target_price if side == "YES" else (1.0 - target_price)
             if fair_value > entry_price:
                 edge_target = entry_price + 0.60 * (fair_value - entry_price)
@@ -143,31 +145,19 @@ class PositionSettler:
                 edge_target = None
         else:
             edge_target = None
+
         if edge_target and current_price >= edge_target:
-            # AI 추정의 90%에 도달하면 익절 (완전 도달 안 기다림)
             pnl = current_price * quantity - size_usdc
-            logger.info(f"[AI_TARGET] {market_id} target={target_price:.2f} current={current_price:.2f} → +${pnl:.2f}")
+            logger.info(f"[AI_TARGET] {market_id} fair={fair_value:.2f} target_60%={edge_target:.2f} current={current_price:.2f} → +${pnl:.2f}")
             return {
                 "action": "SELL",
-                "reason": f"ai_target_{target_price:.2f}",
+                "reason": f"ai_target_{edge_target:.2f}",
                 "exit_price": current_price,
                 "pnl": pnl,
                 "current_price": current_price,
             }
-
-        # Fallback: ROI 기반 익절 (ai_target_price 없는 경우)
-        if entry_price > 0:
-            roi = (current_price - entry_price) / entry_price
-            if roi >= self.take_profit_pct:
-                pnl = current_price * quantity - size_usdc
-                logger.info(f"[TAKE_PROFIT] {market_id} ROI={roi:.1%} → +${pnl:.2f}")
-                return {
-                    "action": "SELL",
-                    "reason": f"take_profit_{roi:.0%}",
-                    "exit_price": current_price,
-                    "pnl": pnl,
-                    "current_price": current_price,
-                }
+        # NOTE: ROI 기반 fallback 제거됨 — AI fair value 익절만 사용
+        # ai_target_price는 live_trader.py에서 position.confidence로 항상 저장됨
 
         # ── P2-A: Near certainty (price >= 0.95) ──
         if current_price >= 0.95:

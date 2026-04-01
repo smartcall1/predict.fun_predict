@@ -138,7 +138,11 @@ async def scan_and_log():
             signals_logged += 1
             print(f"  >>> SIGNAL: BUY {side.upper()} {market.title[:50]} @ {entry_price:.2f} (conf={confidence:.0%})")
 
-            edge = confidence - entry_price if side.upper() == "YES" else confidence - (1 - entry_price)
+            # Edge = AI확률(side기준) - 시장가(side기준)
+            if side.upper() == "YES":
+                edge = confidence - entry_price
+            else:
+                edge = (1.0 - confidence) - (1.0 - entry_price)
             tg.notify_signal(
                 market_title=market.title,
                 side=side,
@@ -146,6 +150,7 @@ async def scan_and_log():
                 confidence=confidence,
                 reasoning=rationale,
                 edge=edge,
+                ai_target=confidence,  # YES 확률 = AI fair value
             )
 
         except Exception as e:

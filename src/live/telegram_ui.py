@@ -85,15 +85,26 @@ class TelegramUI:
     # ── Notifications ───────────────────────────
 
     def notify_trade(self, side: str, market_title: str, price: float,
-                     confidence: float, quantity: int, reasoning: str = ""):
+                     confidence: float, quantity: int, reasoning: str = "",
+                     ai_target: float = 0, edge: float = 0):
+        """거래 알림 — 간결한 Result 형식."""
         emoji = "\U0001f7e2" if side.upper() == "YES" else "\U0001f534"
         cost = quantity * price
+        # AI fair value 기반 목표가
+        if ai_target > 0:
+            fair_value = ai_target if side.upper() == "YES" else (1.0 - ai_target)
+            target_price = price + 0.60 * max(0, fair_value - price)
+            target_str = f"{target_price:.2f}"
+        else:
+            target_str = "-"
+        # Reasoning 첫 문장만
+        short_reason = reasoning.split(".")[0].split("\n")[0].strip()[:120] if reasoning else "-"
         self.send(
             f"{emoji} <b>BUY {side.upper()}</b>\n\n"
             f"<b>Market:</b> {self._esc(market_title[:80])}\n"
             f"<b>Entry:</b> {price:.2f} x {quantity} = ${cost:.2f}\n"
-            f"<b>Confidence:</b> {confidence:.0%}\n"
-            f"<b>Reasoning:</b> {self._esc(reasoning[:150])}"
+            f"<b>Target:</b> {target_str} | <b>Edge:</b> {edge:+.1%}\n"
+            f"<b>Result:</b> {self._esc(short_reason)}"
         )
 
     def notify_settlement(self, result: str, market_title: str, side: str,

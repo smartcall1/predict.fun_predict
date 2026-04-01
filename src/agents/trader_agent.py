@@ -1,7 +1,7 @@
 """
 Trader Agent -- final decision gate after ensemble voting.
 
-Runs on a stronger model (gemini-3.1-pro-preview) and receives all
+Runs on a stronger model (gemini-2.5-pro) and receives all
 ensemble agents' outputs. Acts as a conservative final gatekeeper:
 the ensemble already suggests BUY, so the Trader's job is to CONFIRM
 or REJECT with independent judgement.
@@ -18,7 +18,7 @@ class TraderAgent(BaseAgent):
 
     AGENT_NAME = "trader"
     AGENT_ROLE = "trader"
-    DEFAULT_MODEL = "gemini-3.1-pro-preview"
+    DEFAULT_MODEL = "gemini-2.5-pro"
 
     SYSTEM_PROMPT = (
         "You are the HEAD TRADER at an AI prediction-market fund. You are "
