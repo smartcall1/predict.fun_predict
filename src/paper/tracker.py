@@ -192,6 +192,68 @@ def take_profit_signal(signal_id: int, exit_price: float):
         conn.close()
 
 
+def time_exit_signal(signal_id: int, current_price: float):
+    """
+    72시간 초과 시 현재가 기준으로 강제 청산.
+    PnL = current_price - entry_price.
+    """
+    conn = get_connection()
+    try:
+        row = conn.execute("SELECT * FROM signals WHERE id = ?", (signal_id,)).fetchone()
+        if not row:
+            return
+
+        entry = row["entry_price"]
+        side = row["side"]
+
+        if side.upper() == "YES":
+            pnl = current_price - entry
+        else:
+            pnl = current_price - entry
+
+        outcome = "win" if pnl > 0 else "loss"
+
+        conn.execute(
+            """UPDATE signals SET outcome=?, settlement_price=?, pnl=?, settled_at=? WHERE id=?""",
+            (outcome, current_price, round(pnl, 4),
+             datetime.now(timezone.utc).isoformat(), signal_id),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def check_time_exits(max_hold_hours: int = 72) -> List[int]:
+    """
+    72시간 초과 pending 시그널을 찾아 강제 청산.
+    반환: 청산된 signal_id 리스트.
+    """
+    conn = get_connection()
+    try:
+        rows = conn.execute("SELECT * FROM signals WHERE outcome = 'pending'").fetchall()
+        exited = []
+        now = datetime.now(timezone.utc)
+
+        for row in rows:
+            try:
+                ts = datetime.fromisoformat(row["timestamp"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                hours_held = (now - ts).total_seconds() / 3600
+                if hours_held >= max_hold_hours:
+                    # 현재가를 모르니 entry_price 기준 본전 청산 (PnL=0)
+                    # 실제 현재가가 있으면 외부에서 time_exit_signal()을 직접 호출
+                    time_exit_signal(row["id"], row["entry_price"])
+                    exited.append(row["id"])
+                    print(f"⏰ [PAPER TIME EXIT] id={row['id']} {row['market_title'][:40]} | {hours_held:.1f}h >= {max_hold_hours}h")
+            except Exception:
+                continue
+
+        return exited
+    finally:
+        conn.close()
+
+
 def get_pending_signals() -> List[Dict]:
     conn = get_connection()
     rows = conn.execute("SELECT * FROM signals WHERE outcome = 'pending' ORDER BY timestamp").fetchall()
