@@ -27,39 +27,31 @@ def _calculate_dynamic_quantity(
     confidence_delta: float,
 ) -> int:
     """
-    Calculates trade quantity based on portfolio balance and confidence delta.
-    
+    Fixed $10 per trade position sizing.
+
     Args:
         balance: Current available portfolio balance.
         market_price: The price of the contract (e.g., 0.90 for 90 cents).
-        confidence_delta: The difference between LLM confidence and market price.
-        
+        confidence_delta: (unused, kept for API compatibility)
+
     Returns:
         The number of contracts to purchase.
     """
     if market_price <= 0:
         return 0
-        
-    # Use a percentage of the balance for the trade
-    base_investment_pct = settings.trading.default_position_size / 100
-    
-    # Scale investment by how much our confidence differs from the market
-    investment_scaler = 1 + (settings.trading.position_size_multiplier * confidence_delta)
-    
-    investment_amount = (balance * base_investment_pct) * investment_scaler
-    
-    # Do not exceed the max position size
-    max_investment = (balance * settings.trading.max_position_size_pct) / 100
-    final_investment = min(investment_amount, max_investment)
-    
-    quantity = int(final_investment // market_price)
-    
+
+    fixed_investment = settings.trading.fixed_bet_amount
+    if fixed_investment > balance:
+        fixed_investment = balance
+
+    quantity = int(fixed_investment // market_price)
+
     get_trading_logger("decision_engine").info(
-        "Calculated dynamic position size.",
-        investment_amount=final_investment,
+        "Fixed position size.",
+        investment_amount=fixed_investment,
         quantity=quantity
     )
-    
+
     return quantity
 
 
@@ -263,8 +255,8 @@ async def make_decision_for_market(
             logger.info(f"Market {market.market_id} volume {market.volume} below AI analysis threshold. Skipping.")
             return None
 
-        # CHECK 5: Category filtering
-        if market.category.lower() in [cat.lower() for cat in settings.trading.exclude_low_liquidity_categories]:
+        # CHECK 5: Category filtering (excluded_categories 사용)
+        if market.category.lower() in [cat.lower() for cat in settings.trading.excluded_categories]:
             logger.info(f"Market {market.market_id} in excluded category '{market.category}'. Skipping.")
             return None
 
@@ -536,31 +528,24 @@ async def make_decision_for_market(
         if decision.action.upper() == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
             price = yes_price if decision.side.upper() == "YES" else no_price
 
-            # ── Filter: 단기 스포츠 마켓 edge 강화 ──
-            # 타이틀에 날짜 패턴(YYYY MM DD) + 스포츠 키워드 → min_edge 15%
+            # ── Filter: 스포츠 마켓 완전 차단 ──
             import re
             _SPORTS_KW = re.compile(
                 r'\b(Nba|Nfl|Nhl|Mlb|Mls|Lol|Csgo|Cs2|Dota|Valorant|Atp|Wta|Ufc|'
-                r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl)\b',
+                r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl|'
+                r'Match Winner|Nhl\s|Mlb\s)\b',
                 re.IGNORECASE,
             )
-            _DATE_IN_TITLE = re.compile(r'20\d{2}\s+\d{2}\s+\d{2}')
             _title = market.title or ""
-            is_sports_shortterm = bool(_SPORTS_KW.search(_title) and _DATE_IN_TITLE.search(_title))
-            if is_sports_shortterm:
-                sports_min_edge = 0.15
-                actual_edge = abs(confidence - yes_price) if decision.side.upper() == "YES" else abs((1.0 - confidence) - no_price)
-                if actual_edge < sports_min_edge:
-                    logger.info(
-                        f"⚽ SPORTS FILTER: {market.market_id} edge={actual_edge:.3f} < {sports_min_edge} "
-                        f"(short-term sports). SKIP."
-                    )
-                    await db_manager.record_market_analysis(
-                        market.market_id, "SPORTS_FILTERED", confidence, total_analysis_cost,
-                        f"short_term_sports_edge_{actual_edge:.3f}"
-                    )
-                    return None
-                logger.info(f"⚽ SPORTS PASS: {market.market_id} edge={actual_edge:.3f} >= {sports_min_edge}")
+            if _SPORTS_KW.search(_title):
+                logger.info(
+                    f"⚽ SPORTS BLOCK: {market.market_id} '{_title[:50]}' — sports market rejected."
+                )
+                await db_manager.record_market_analysis(
+                    market.market_id, "SPORTS_BLOCKED", confidence, total_analysis_cost,
+                    "sports_category_excluded"
+                )
+                return None
 
             # Apply Grok4 edge filtering - 10% minimum edge requirement
             from src.utils.edge_filter import EdgeFilter
@@ -687,12 +672,8 @@ async def make_decision_for_market(
                     confidence=confidence,
                     live=False,
                     
-                    # AI fair value 기반 익절: entry + 60% × (AI추정 - entry)
-                    # NO side: confidence(YES확률)를 1-confidence(NO fair value)로 변환
                     stop_loss_price=exit_strategy['stop_loss_price'],
-                    take_profit_price=min(0.99, price + 0.60 * (
-                        (confidence if decision.side.upper() == "YES" else 1.0 - confidence) - price
-                    )),
+                    take_profit_price=exit_strategy['take_profit_price'],
                     max_hold_hours=exit_strategy['max_hold_hours'],
                     target_confidence_change=exit_strategy['target_confidence_change']
                 )
