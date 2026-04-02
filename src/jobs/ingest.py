@@ -177,14 +177,20 @@ async def process_and_queue_markets(
         await db_manager.upsert_markets(markets_to_upsert)
         logger.info(f"Upserted {len(markets_to_upsert)} markets from Predict.fun.")
 
-        # Category filter first (cheap, no API calls)
+        # Category filter first (cheap, no API calls) — 대소문자 무관
+        import re
+        _SPORTS_TITLE_RE = re.compile(
+            r'\b(Nba|Nfl|Nhl|Mlb|Mls|Lol|Csgo|Cs2|Dota|Valorant|Atp|Wta|Ufc|'
+            r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl|Match Winner)\b',
+            re.IGNORECASE,
+        )
+        excluded_lower = {c.lower() for c in settings.trading.excluded_categories}
+        preferred_lower = {c.lower() for c in settings.trading.preferred_categories}
         category_filtered = [
             m for m in markets_to_upsert
-            if (
-                not settings.trading.preferred_categories
-                or m.category in settings.trading.preferred_categories
-            )
-            and m.category not in settings.trading.excluded_categories
+            if (not preferred_lower or m.category.lower() in preferred_lower)
+            and m.category.lower() not in excluded_lower
+            and not _SPORTS_TITLE_RE.search(m.title or "")
         ]
 
         # Fetch stats for category-filtered markets to get real volume
@@ -223,10 +229,26 @@ async def process_and_queue_markets(
 
         print(f"[STATS] Done. {len(eligible_markets)} eligible (vol>=${settings.trading.min_volume}) from {len(category_filtered)} checked")
 
-        # NOTE: Predict.fun API는 만기일(endDate)을 제공하지 않아 만기 필터 적용 불가.
-        # Polymarket 버전(poly_predict)에서는 만기 필터가 적용되어 있음.
+        # 그룹 마켓 필터: 제목 괄호 안 그룹명이 같은 마켓 → 볼륨 상위 3개만 허용
+        import re
+        _group_re = re.compile(r'\(([^)]+)\)\s*$')
+        group_counts = {}
+        # 볼륨 높은 순으로 정렬하여 상위 마켓 우선 통과
+        eligible_markets.sort(key=lambda m: m.volume, reverse=True)
+        filtered_markets = []
+        for m in eligible_markets:
+            match = _group_re.search(m.title or "")
+            if match:
+                group_name = match.group(1).strip().lower()
+                group_counts[group_name] = group_counts.get(group_name, 0) + 1
+                if group_counts[group_name] > 3:
+                    continue  # 같은 그룹 4번째부터 스킵
+            filtered_markets.append(m)
 
-        for market in eligible_markets:
+        if len(filtered_markets) < len(eligible_markets):
+            print(f"[GROUP] 그룹 필터 적용: {len(eligible_markets)} → {len(filtered_markets)}개")
+
+        for market in filtered_markets:
             await queue.put(market)
     else:
         logger.info("No active markets to upsert in this batch.")
