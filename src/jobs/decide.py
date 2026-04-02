@@ -140,6 +140,8 @@ async def _run_ensemble_decision(
             return None
 
         # --- Phase 2: Trader verification (Pro model) ---
+        # Flash 5개 호출 후 쿨다운 — Pro 503 방지
+        await asyncio.sleep(15)
         logger.info(
             f"Ensemble suggests BUY {suggested_side} (edge={edge:+.3f}). "
             f"Running Trader (Pro) for final verification..."
