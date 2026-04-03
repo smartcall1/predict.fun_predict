@@ -448,6 +448,9 @@ class LiveTrader:
                     payout = quantity * 1.0
                     self.state.record_win(pnl)
                     self.state.bankroll += payout
+
+                    # Auto-redeem: 온체인 USDT 회수
+                    await self._auto_redeem(pos)
                 elif action == "LOSS":
                     # 마켓 정산 패배: payout = 0 (이미 차감됨)
                     self.state.record_loss(pnl)
@@ -500,6 +503,43 @@ class LiveTrader:
 
         if settled:
             logger.info(f"Settled {settled} positions")
+
+    async def _auto_redeem(self, pos: Dict):
+        """WIN 정산 후 온체인 USDT 회수 (폴리마켓 auto_claim 동일)."""
+        market_id = pos.get("market_id")
+        side = pos.get("side", "YES").upper()
+        try:
+            info = await self.client.get_market_redeem_info(market_id)
+            if not info or not info.get("condition_id"):
+                logger.warning(f"[REDEEM] conditionId 없음: {market_id}")
+                return
+
+            # side에 맞는 indexSet 결정 (YES=1, NO=2)
+            index_set = 1 if side == "YES" else 2
+            outcomes = info.get("outcomes", [])
+            for o in outcomes:
+                oname = str(o.get("name", "")).upper()
+                if (side == "YES" and oname in ("YES", "UP", "ABOVE")) or \
+                   (side == "NO" and oname in ("NO", "DOWN", "BELOW")):
+                    index_set = o.get("indexSet", index_set)
+                    break
+
+            is_neg_risk = info["is_neg_risk"]
+            quantity_wei = int(pos.get("quantity", 0) * 10**18)
+
+            success = await self.client.redeem_position(
+                condition_id=info["condition_id"],
+                index_set=index_set,
+                amount=quantity_wei if is_neg_risk else None,
+                is_neg_risk=is_neg_risk,
+                is_yield_bearing=info["is_yield_bearing"],
+            )
+            if success:
+                logger.info(f"[REDEEM] ✅ {market_id} {side} 회수 완료")
+            else:
+                logger.warning(f"[REDEEM] ❌ {market_id} 회수 실패")
+        except Exception as e:
+            logger.error(f"[REDEEM] {market_id} 에러: {e}")
 
 
 # ── CLI ─────────────────────────────────────────

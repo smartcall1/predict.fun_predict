@@ -376,6 +376,46 @@ class PredictFunClient(TradingLoggerMixin):
     async def get_trades(self, ticker: Optional[str] = None, limit: int = 100, cursor: Optional[str] = None) -> Dict[str, Any]:
         return {"trades": []}
 
+    # ── Redeem (auto_claim) ────────────────────────
+    async def redeem_position(self, condition_id: str, index_set: int,
+                              amount: Optional[int] = None,
+                              is_neg_risk: bool = False,
+                              is_yield_bearing: bool = False) -> bool:
+        """Redeem resolved position → USDT 회수."""
+        if not self._builder or settings.trading.paper_trading_mode:
+            return False
+        try:
+            kwargs = {
+                "condition_id": condition_id,
+                "index_set": index_set,
+                "is_neg_risk": is_neg_risk,
+                "is_yield_bearing": is_yield_bearing,
+            }
+            if is_neg_risk:
+                kwargs["amount"] = amount or 0
+            result = await self._builder.redeem_positions_async(**kwargs)
+            self.logger.info(f"Redeem result: success={result.success} conditionId={condition_id[:16]}...")
+            return result.success
+        except Exception as e:
+            self.logger.warning(f"Redeem failed: {e}")
+            return False
+
+    async def get_market_redeem_info(self, market_id: str) -> Optional[Dict]:
+        """마켓에서 redeem에 필요한 conditionId, outcomes, negRisk 정보 조회."""
+        try:
+            data = await self._request("GET", f"/v1/markets/{market_id}")
+            if not data:
+                return None
+            return {
+                "condition_id": data.get("conditionId"),
+                "is_neg_risk": bool(data.get("isNegRisk")),
+                "is_yield_bearing": bool(data.get("isYieldBearing")),
+                "outcomes": data.get("outcomes", []),
+            }
+        except Exception as e:
+            self.logger.warning(f"get_market_redeem_info failed: {e}")
+            return None
+
     # ── Approvals ────────────────────────────────
 
     async def ensure_approvals(self):
