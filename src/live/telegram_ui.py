@@ -24,7 +24,7 @@ KEYBOARD = {
     "keyboard": [
         ["📊 Status", "📋 Trades"],
         ["📌 Positions", "💰 Stats"],
-        ["⏹ Stop"],
+        ["📄 Logs", "⏹ Stop"],
     ],
     "resize_keyboard": True,
     "one_time_keyboard": False,
@@ -49,6 +49,7 @@ class TelegramUI:
         self._on_trades: Optional[Callable] = None
         self._on_positions: Optional[Callable] = None
         self._on_stats: Optional[Callable] = None
+        self._on_logs: Optional[Callable] = None
         self._on_stop: Optional[Callable] = None
 
         # Confirmation state
@@ -205,6 +206,9 @@ class TelegramUI:
         elif text in ("💰 Stats", "/stats"):
             if self._on_stats:
                 self._on_stats()
+        elif text in ("📄 Logs", "/logs"):
+            if self._on_logs:
+                self._on_logs()
         elif text in ("⏹ Stop", "/stop"):
             self._pending_confirm = {"action": "stop", "expires": time.time() + 30}
             self.send(
@@ -225,6 +229,9 @@ class TelegramUI:
 
     def on_stats(self, fn: Callable):
         self._on_stats = fn
+
+    def on_logs(self, fn: Callable):
+        self._on_logs = fn
 
     def on_stop(self, fn: Callable):
         self._on_stop = fn

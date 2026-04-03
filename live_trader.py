@@ -71,6 +71,7 @@ class LiveTrader:
         self.tg.on_trades(self._cmd_trades)
         self.tg.on_positions(self._cmd_positions)
         self.tg.on_stats(self._cmd_stats)
+        self.tg.on_logs(self._cmd_logs)
         self.tg.on_stop(self._cmd_stop)
 
     # ── Telegram Commands ───────────────────────
@@ -202,6 +203,25 @@ class LiveTrader:
             f"최고 잔고: ${peak:.2f}\n"
             f"{sep}"
         )
+
+    def _cmd_logs(self):
+        """Send recent log tail via Telegram."""
+        log_path = os.path.join(os.path.dirname(__file__), "logs", "live_trader.log")
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f:
+                lines = f.readlines()
+            tail = lines[-30:] if len(lines) > 30 else lines
+            text = "".join(tail)
+            if not text.strip():
+                text = "(로그 비어있음)"
+            # 텔레그램 메시지 4096자 제한
+            if len(text) > 3800:
+                text = text[-3800:]
+            self.tg.send(f"📄 <b>최근 로그</b>\n<pre>{self.tg._esc(text)}</pre>")
+        except FileNotFoundError:
+            self.tg.send("📄 <b>로그 파일 없음</b>")
+        except Exception as e:
+            self.tg.send(f"📄 로그 읽기 실패: {e}")
 
     def _cmd_stop(self):
         """Graceful stop via Telegram."""
