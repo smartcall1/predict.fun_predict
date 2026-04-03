@@ -107,8 +107,16 @@ class TelegramUI:
         elif result == "LOSS":
             header = "\U0001f6d1 <b>[LOSS] 정산 완료</b>"
             pnl_line = f"\U0001f4c9 손실: ${pnl:+.2f}"
+        elif result == "SELL":
+            icon = "\U0001f4b0" if pnl >= 0 else "\U0001f6d1"
+            label = "익절" if pnl >= 0 else "손절"
+            header = f"{icon} <b>[{label}] 조기 청산</b>"
+            pnl_line = f"\U0001f4b2 PnL: ${pnl:+.2f} ({reason})"
+        elif result == "VOID":
+            header = "\U0001f504 <b>[VOID] 취소/환불</b>"
+            pnl_line = f"\U0001f4b2 PnL: ${pnl:+.2f}"
         else:
-            header = "\U0001f504 <b>[VOID] 정산 완료</b>"
+            header = f"\U00002753 <b>[{result}] 정산</b>"
             pnl_line = f"\U0001f4b2 PnL: ${pnl:+.2f}"
         self.send(
             f"{header}\n"
