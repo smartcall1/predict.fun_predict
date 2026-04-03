@@ -100,7 +100,7 @@ class PredictRedeemer:
             generate_salt_fn=generate_order_salt,
             logger=logging.getLogger("predict_sdk"),
             signer=self._signer,
-            predict_account=settings.api.wallet_address,
+            predict_account=settings.api.deposit_address or settings.api.wallet_address,
             contracts=contracts,
             web3=self._w3,
         )

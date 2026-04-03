@@ -82,6 +82,8 @@ class PredictFunClient(TradingLoggerMixin):
         self._w3: Optional[Any] = None
         self._live_ready = False
 
+        self._jwt_token: Optional[str] = None
+
         if not settings.trading.paper_trading_mode and settings.api.private_key and _SDK_AVAILABLE:
             self._init_order_builder()
 
@@ -117,7 +119,7 @@ class PredictFunClient(TradingLoggerMixin):
                 generate_salt_fn=generate_order_salt,
                 logger=logging.getLogger("predict_sdk"),
                 signer=signer,
-                predict_account=settings.api.wallet_address,
+                predict_account=settings.api.deposit_address or settings.api.wallet_address,
                 contracts=contracts,
                 web3=self._w3,
             )
@@ -127,6 +129,47 @@ class PredictFunClient(TradingLoggerMixin):
             self.logger.warning(f"OrderBuilder init failed: {e}")
             self._builder = None
             self._live_ready = False
+
+    # ── JWT Authentication ──────────────────────
+
+    async def _authenticate(self) -> bool:
+        """3-step JWT authentication: get message → sign → exchange for token."""
+        if not self._builder or not self._live_ready:
+            return False
+        try:
+            # Step 1: Get message to sign
+            resp = await self.client.get(
+                f"{self.base_url}/v1/auth/message",
+                headers={"x-api-key": self.api_key or ""},
+            )
+            resp.raise_for_status()
+            message = resp.json().get("data", {}).get("message", "")
+            if not message:
+                self.logger.warning("JWT auth: empty message from /v1/auth/message")
+                return False
+
+            # Step 2: Sign message with predict account
+            signature = self._builder.sign_predict_account_message(message)
+
+            # Step 3: Exchange signature for JWT
+            signer = settings.api.deposit_address or settings.api.wallet_address
+            auth_resp = await self.client.post(
+                f"{self.base_url}/v1/auth",
+                headers={"x-api-key": self.api_key or "", "Content-Type": "application/json"},
+                json={"signer": signer, "message": message, "signature": signature},
+            )
+            auth_resp.raise_for_status()
+            token = auth_resp.json().get("data", {}).get("token", "")
+            if token:
+                self._jwt_token = token
+                self.client.headers["Authorization"] = f"Bearer {token}"
+                self.logger.info("JWT authentication successful")
+                return True
+            self.logger.warning("JWT auth: no token in response")
+            return False
+        except Exception as e:
+            self.logger.warning(f"JWT authentication failed: {e}")
+            return False
 
     # ── HTTP Request Helper ─────────────────────
 
@@ -160,6 +203,11 @@ class PredictFunClient(TradingLoggerMixin):
 
             except httpx.HTTPStatusError as e:
                 last_exception = e
+                # 401 → JWT 인증 후 재시도 (1회만)
+                if e.response.status_code == 401 and attempt == 0 and self._live_ready:
+                    self.logger.info("401 → JWT 인증 시도...")
+                    if await self._authenticate():
+                        continue  # 인증 성공 → 재시도
                 if e.response.status_code == 429 or e.response.status_code >= 500:
                     sleep_time = self.backoff_factor * (2 ** attempt)
                     self.logger.warning(f"API {e.response.status_code}, retrying in {sleep_time:.1f}s")
@@ -615,9 +663,9 @@ class PredictFunClient(TradingLoggerMixin):
         if not token_id:
             raise PredictFunAPIError(f"No onChainId found for market {ticker}, outcomes: {outcomes}")
 
-        # Sync precision
+        # Sync precision (10**N 형태로 세팅 — OrderBuilder.__init__과 동일)
         try:
-            self._builder._precision = precision
+            self._builder._precision = 10 ** precision
         except Exception:
             pass
 
@@ -665,21 +713,58 @@ class PredictFunClient(TradingLoggerMixin):
             raise PredictFunAPIError(f"Order amount calculation failed: {e}")
 
         # 4. Sign EIP-712 typed data
+        is_neg_risk = bool(market.get("isNegRisk"))
+        is_yield_bearing = bool(market.get("isYieldBearing"))
         try:
-            typed_data = self._builder.build_typed_data(BuildOrderInput(
+            order_input = BuildOrderInput(
                 side=sdk_side,
                 token_id=token_id,
                 maker_amount=amounts.maker_amount,
                 taker_amount=amounts.taker_amount,
                 fee_rate_bps=fee_rate_bps,
-            ))
+            )
+            strategy = "LIMIT" if type_.lower() == "limit" else "MARKET"
+            order = self._builder.build_order(strategy=strategy, data=order_input)
+            typed_data = self._builder.build_typed_data(
+                order,
+                is_neg_risk=is_neg_risk,
+                is_yield_bearing=is_yield_bearing,
+            )
             signed: SignedOrder = self._builder.sign_typed_data_order(typed_data)
         except Exception as e:
             raise PredictFunAPIError(f"Order signing failed: {e}")
 
-        # 5. POST /v1/orders
+        # 5. POST /v1/orders (camelCase + data wrapper)
         try:
-            payload = signed.model_dump() if hasattr(signed, "model_dump") else signed.__dict__
+            order_hash = self._builder.build_typed_data_hash(typed_data)
+            price_per_share = str(amounts.price_per_share)
+            order_payload = {
+                "salt": str(signed.salt),
+                "maker": signed.maker,
+                "signer": signed.signer,
+                "taker": signed.taker,
+                "tokenId": str(signed.token_id),
+                "makerAmount": str(signed.maker_amount),
+                "takerAmount": str(signed.taker_amount),
+                "expiration": str(signed.expiration),
+                "nonce": str(signed.nonce),
+                "feeRateBps": str(signed.fee_rate_bps),
+                "side": signed.side.value if hasattr(signed.side, "value") else int(signed.side),
+                "signatureType": signed.signature_type.value if hasattr(signed.signature_type, "value") else int(signed.signature_type),
+                "signature": signed.signature,
+            }
+            strategy = "LIMIT" if type_.lower() == "limit" else "MARKET"
+            payload = {
+                "data": {
+                    "order": order_payload,
+                    "hash": order_hash,
+                    "pricePerShare": price_per_share,
+                    "strategy": strategy,
+                }
+            }
+            if strategy == "MARKET":
+                payload["data"]["slippageBps"] = str(slippage_bps)
+
             response = await self.client.post(
                 f"{self.base_url}/v1/orders",
                 json=payload,
