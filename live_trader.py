@@ -337,11 +337,19 @@ class LiveTrader:
                     tid = result["order_id"]
                     # AI 추정 확률 저장 (settler에서 side별 변환)
                     ai_target = position.confidence  # YES 확률 그대로 저장, settler에서 side 반영
+                    # 적응형 SL/TP 계산 (폴리마켓 AI 앙상블 동일)
+                    from src.utils.stop_loss_calculator import StopLossCalculator
+                    _entry = result.get("entry_price", position.entry_price)
+                    _exit_levels = StopLossCalculator.calculate_stop_loss_levels(
+                        entry_price=_entry,
+                        side=position.side,
+                        confidence=position.confidence,
+                    )
                     pos_data = {
                         "market_id": market.market_id,
                         "market_title": market.title,
                         "side": position.side,
-                        "entry_price": result.get("entry_price", position.entry_price),
+                        "entry_price": _entry,
                         "quantity": position.quantity,
                         "size_usdc": result.get("trade_value", position.quantity * position.entry_price),
                         "confidence": position.confidence,
@@ -349,6 +357,9 @@ class LiveTrader:
                         "rationale": position.rationale or "",
                         "strategy": position.strategy or "directional",
                         "timestamp": time.time(),
+                        "stop_loss_price": _exit_levels["stop_loss_price"],
+                        "take_profit_price": _exit_levels["take_profit_price"],
+                        "max_hold_hours": _exit_levels["max_hold_hours"],
                     }
                     self.state.add_position(tid, pos_data)
                     self.state.bankroll -= pos_data["size_usdc"]
