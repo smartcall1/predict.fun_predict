@@ -41,6 +41,11 @@ feedparser>=6.0.0
 # JSON repair (for LLM output parsing)
 json-repair
 
+# === Live Trading (Predict.fun SDK + BNB Chain) ===
+predict-sdk>=0.0.1
+web3>=6.0.0
+eth-account>=0.11.0
+
 # === OPTIONAL (not needed for core paper trading) ===
 # Termux: install via `pkg install python-numpy` instead of pip
 # numpy>=1.24.0

@@ -78,65 +78,132 @@ class LiveTrader:
     def _cmd_status(self):
         s = self.state.stats
         pos_count = self.state.position_count
+        sep = "─" * 20
+
+        # 미실현 PnL 계산
+        unrealized = 0.0
+        for tid, pos in self.state.positions.items():
+            entry = pos.get("entry_price", 0)
+            current = pos.get("current_price", entry)
+            qty = pos.get("quantity", 0)
+            unrealized += (current - entry) * qty
+
+        portfolio = self.state.bankroll + sum(
+            pos.get("current_price", pos.get("entry_price", 0)) * pos.get("quantity", 0)
+            for pos in self.state.positions.values()
+        )
+
+        wins = s.get('wins', 0)
+        losses = s.get('losses', 0)
+        settled = wins + losses
+        win_rate = (wins / settled * 100) if settled > 0 else 0.0
+        total_pnl = s.get('total_pnl', 0)
+        ai_cost = s.get('total_ai_cost', 0)
+        net_pnl = total_pnl - ai_cost
+
+        # ROI
+        roi_line = ""
+        initial = settings.trading.initial_bankroll
+        if initial > 0:
+            roi = (total_pnl + unrealized) / initial * 100
+            roi_line = f"💹 ROI: {roi:+.2f}%\n"
+
         self.tg.send(
-            f"📊 <b>Bot Status [{self.mode_str}]</b>\n"
-            f"{'='*30}\n"
-            f"💰 Bankroll: ${self.state.bankroll:.2f}\n"
-            f"📌 Positions: {pos_count}/{settings.trading.max_positions}\n"
-            f"📈 W/L/V: {s.get('wins',0)}/{s.get('losses',0)}/{s.get('voids',0)}\n"
-            f"🎯 Win Rate: {self.state.win_rate}%\n"
-            f"💵 PnL: ${s.get('total_pnl',0):+.2f}\n"
-            f"🤖 AI Cost: ${s.get('total_ai_cost',0):.4f}\n"
-            f"{'='*30}\n"
-            f"<i>Updated: {datetime.utcnow().strftime('%H:%M UTC')}</i>"
+            f"📊 <b>BOT STATUS [{self.mode_str}]</b>\n"
+            f"{sep}\n"
+            f"💼 포트폴리오: ${portfolio:.2f}\n"
+            f"💵 가용 잔고: ${self.state.bankroll:.2f}\n"
+            f"{sep}\n"
+            f"🤖 AI 앙상블: ${total_pnl:+.2f} ({wins}W/{losses}L, {win_rate:.0f}%)\n"
+            f"📉 미실현 PnL: ${unrealized:+.2f}\n"
+            f"💸 AI 비용: ${ai_cost:.4f} | 순PnL: ${net_pnl:+.2f}\n"
+            f"{roi_line}"
+            f"{sep}\n"
+            f"📌 포지션: {pos_count}/{settings.trading.max_positions}개\n"
+            f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)"
         )
 
     def _cmd_trades(self):
         trades = self.state.get_recent_trades(10)
         if not trades:
-            self.tg.send("📋 No trades yet.")
+            self.tg.send("📋 <b>거래 내역 없음</b>")
             return
 
-        lines = ["📋 <b>Recent Trades</b>\n"]
-        for t in trades:
-            result = t.get("result", "?")
-            emoji = {"WIN": "✅", "LOSS": "❌", "VOID": "🔄", "SELL": "💰"}.get(result, "•")
-            pnl = t.get("pnl", 0)
-            title = t.get("market_title", "")[:35]
-            lines.append(f"{emoji} {result} ${pnl:+.2f} | {title}")
+        settled = [t for t in trades if t.get("result") in ("WIN", "LOSS", "VOID", "SELL")]
+        if not settled:
+            self.tg.send("📋 <b>정산된 거래 없음</b>")
+            return
 
-        self.tg.send("\n".join(lines))
+        sep = "─" * 20
+        rows = []
+        icon_map = {"WIN": "✅", "LOSS": "❌", "VOID": "🚫", "SELL": "💰"}
+        for t in settled:
+            result = t.get("result", "?")
+            icon = icon_map.get(result, "❌")
+            pnl = t.get("pnl", 0)
+            title = (t.get("market_title", "") or "")[:30]
+            rows.append(f"{icon} <b>{result}</b> {title}\n  💵 {pnl:+.2f}")
+
+        msg = "📋 <b>최근 거래 내역</b>\n\n" + f"\n{sep}\n".join(rows)
+        self.tg.send(msg)
 
     def _cmd_positions(self):
         positions = self.state.positions
         if not positions:
-            self.tg.send("📌 No open positions.")
+            self.tg.send("📭 <b>활성 포지션 없음</b>")
             return
 
-        lines = [f"📌 <b>Open Positions ({len(positions)})</b>\n"]
+        sep = "─" * 20
+        rows = []
+        total_unrealized = 0.0
+
         for tid, pos in positions.items():
             side = pos.get("side", "?")
             entry = pos.get("entry_price", 0)
-            title = pos.get("market_title", "")[:35]
-            hours = (time.time() - pos.get("timestamp", time.time())) / 3600
-            lines.append(f"{'🟢' if side=='YES' else '🔴'} {side} @ {entry:.2f} ({hours:.0f}h) | {title}")
+            current = pos.get("current_price", entry)
+            qty = pos.get("quantity", 0)
+            size = pos.get("size_usdc", entry * qty)
+            title = (pos.get("market_title", "") or "")[:28]
+            side_short = "Y" if side.upper() == "YES" else "N"
 
-        self.tg.send("\n".join(lines))
+            unrealized = (current - entry) * qty
+            total_unrealized += unrealized
+
+            idx = len(rows) + 1
+            rows.append(
+                f"{idx:02d}. <b>{title}</b> [{side_short}]\n"
+                f"  ${size:.0f} | UnPNL {unrealized:+.2f}"
+            )
+
+        header = f"📌 <b>활성 포지션 {len(positions)}개</b> | 합산 미실현 {total_unrealized:+.2f}\n"
+        msg = header + "\n\n" + f"\n{sep}\n".join(rows)
+        self.tg.send(msg)
 
     def _cmd_stats(self):
         s = self.state.stats
-        total = s.get("wins", 0) + s.get("losses", 0)
+        sep = "─" * 20
+        wins = s.get("wins", 0)
+        losses = s.get("losses", 0)
+        voids = s.get("voids", 0)
+        total = wins + losses
+        win_rate = (wins / total * 100) if total > 0 else 0.0
+        total_pnl = s.get("total_pnl", 0)
+        ai_cost = s.get("total_ai_cost", 0)
+        net_pnl = total_pnl - ai_cost
+        peak = self.state.state.get("peak_bankroll", 0)
+
         self.tg.send(
-            f"💰 <b>Performance Stats [{self.mode_str}]</b>\n"
-            f"{'='*30}\n"
-            f"Total Trades: {total}\n"
-            f"Wins: {s.get('wins',0)} | Losses: {s.get('losses',0)} | Voids: {s.get('voids',0)}\n"
-            f"Win Rate: {self.state.win_rate}%\n"
-            f"Total PnL: ${s.get('total_pnl',0):+.2f}\n"
-            f"Peak Bankroll: ${self.state.state.get('peak_bankroll',0):.2f}\n"
-            f"AI Cost: ${s.get('total_ai_cost',0):.4f}\n"
-            f"Net PnL: ${s.get('total_pnl',0) - s.get('total_ai_cost',0):+.2f}\n"
-            f"{'='*30}"
+            f"💰 <b>성과 통계 [{self.mode_str}]</b>\n"
+            f"{sep}\n"
+            f"총 거래: {total}건 (무효: {voids})\n"
+            f"승/패: {wins}W / {losses}L\n"
+            f"승률: {win_rate:.1f}%\n"
+            f"{sep}\n"
+            f"실현 PnL: ${total_pnl:+.2f}\n"
+            f"AI 비용: ${ai_cost:.4f}\n"
+            f"순 PnL: ${net_pnl:+.2f}\n"
+            f"최고 잔고: ${peak:.2f}\n"
+            f"{sep}"
         )
 
     def _cmd_stop(self):
@@ -160,6 +227,10 @@ class LiveTrader:
         if self.state.bankroll == 0:
             self.state.init_bankroll(balance or settings.trading.initial_bankroll)
         logger.info(f"Bankroll: ${self.state.bankroll:.2f}")
+
+        # Live mode: ensure on-chain approvals
+        if self.live_mode:
+            await self.client.ensure_approvals()
 
         # Start Telegram polling
         self.tg.start_polling()
@@ -323,6 +394,19 @@ class LiveTrader:
 
         for tid, pos in positions.items():
             try:
+                # 현재가 갱신 (텔레그램 UnPNL 표시용)
+                try:
+                    cur = await self.executor.get_current_price(pos["market_id"])
+                    if cur:
+                        side = pos.get("side", "YES").upper()
+                        cp = cur.get("yes_price") if side == "YES" else cur.get("no_price")
+                        if cp:
+                            live_pos = self.state.get_position(tid)
+                            if live_pos:
+                                live_pos["current_price"] = cp
+                except Exception:
+                    pass
+
                 result = await self.settler.check_position(tid, pos)
                 if result is None:
                     continue

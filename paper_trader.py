@@ -246,15 +246,16 @@ async def check_settlements():
 
             if current_price is not None:
                 # ── 익절: TP 도달 (15~30%) ──
-                tp_triggered = (current_price >= tp_price) if side == "YES" else (current_price <= tp_price)
+                tp_triggered = current_price >= tp_price  # YES/NO 동일 (가격 공간 이미 변환됨)
                 if tp_triggered:
                     take_profit_signal(sig["id"], current_price)
                     pnl = current_price - entry
+                    tp_result = "WIN" if pnl > 0 else "LOSS"
                     logger.info(f"💰 TAKE PROFIT #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (TP={tp_price:.2f}, PnL={pnl:+.2f})")
                     tg.notify_settlement(
                         market_title=sig.get("market_title", ""),
                         side=sig["side"], entry_price=entry,
-                        exit_price=current_price, pnl=pnl, result="WIN",
+                        exit_price=current_price, pnl=pnl, result=tp_result,
                     )
                     settled_count += 1
                     continue

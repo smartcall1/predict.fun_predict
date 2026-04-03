@@ -45,7 +45,7 @@ class TradingConfig:
     min_balance: float = 50.0               # 최소 잔고
 
     # Market filtering
-    min_volume: float = 1000.0              # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
+    min_volume: float = 500.0               # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
     max_time_to_expiry_days: int = 30       # 최대 만기일
 
     # AI decision thresholds
@@ -62,6 +62,7 @@ class TradingConfig:
     kelly_fraction: float = 0.25            # quarter-Kelly (보수적)
     max_single_position: float = 0.05       # 5% 최대 포지션
     default_position_size: float = 3.0      # 기본 포지션 크기 (%)
+    fixed_bet_amount: float = float(os.getenv("FIXED_BET_AMOUNT", "10.0"))  # 고정 베팅 금액 (USDT)
     position_size_multiplier: float = 1.0
 
     # Live/Paper mode

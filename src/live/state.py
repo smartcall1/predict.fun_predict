@@ -155,7 +155,8 @@ class StateManager:
             self.state["stats"]["voids"] += 1
 
     def record_ai_cost(self, cost: float):
-        self.state["stats"]["total_ai_cost"] += cost
+        with self._lock:
+            self.state["stats"]["total_ai_cost"] += cost
 
     @property
     def win_rate(self) -> float:

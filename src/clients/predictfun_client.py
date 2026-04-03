@@ -1,9 +1,11 @@
 """
 Predict.fun API client for trading operations.
-Replaces kalshi_client.py — adapted for Predict.fun (BNB Chain) prediction markets.
+Supports both Paper simulation and Live trading via predict-sdk.
+
+Paper mode: realistic cost simulation (orderbook, slippage, fees, gas)
+Live mode:  predict-sdk OrderBuilder → EIP-712 signing → POST /v1/orders
 
 API docs: https://dev.predict.fun/
-Swagger: https://api.predict.fun/docs
 """
 
 import asyncio
@@ -16,6 +18,35 @@ import httpx
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
 
+# ── Live Trading SDK imports (lazy, fail gracefully) ──
+_SDK_AVAILABLE = False
+try:
+    from predict_sdk import (
+        OrderBuilder, BuildOrderInput,
+        ChainId, Side as SdkSide,
+        ADDRESSES_BY_CHAIN_ID, RPC_URLS_BY_CHAIN_ID,
+        generate_order_salt,
+        LimitHelperInput, MarketHelperInput, MarketHelperValueInput,
+        Book, DepthLevel, SignedOrder,
+    )
+    from eth_account import Account
+    from web3 import Web3
+    _SDK_AVAILABLE = True
+except ImportError:
+    pass
+
+CHAIN_ID_BNB = ChainId.BNB_MAINNET if _SDK_AVAILABLE else None
+WEI = 10 ** 18
+DEFAULT_PRECISION = 5
+
+
+def _usdt_to_wei(amount: float) -> int:
+    return int(amount * WEI)
+
+
+def _wei_to_usdt(amount_wei: int) -> float:
+    return amount_wei / WEI
+
 
 class PredictFunAPIError(Exception):
     """Custom exception for Predict.fun API errors."""
@@ -25,7 +56,8 @@ class PredictFunAPIError(Exception):
 class PredictFunClient(TradingLoggerMixin):
     """
     Predict.fun API client for automated trading.
-    Handles market data retrieval and (future) trade execution.
+    Paper mode: orderbook-based simulation with realistic costs.
+    Live mode:  predict-sdk EIP-712 signed orders on BNB Chain.
     """
 
     def __init__(self, api_key: Optional[str] = None, max_retries: int = 3, backoff_factor: float = 1.0):
@@ -44,7 +76,56 @@ class PredictFunClient(TradingLoggerMixin):
             },
         )
 
-        self.logger.info("Predict.fun client initialized", api_key_present=bool(self.api_key))
+        # ── Live Trading: OrderBuilder (predict-sdk) ──
+        self._builder: Optional[Any] = None
+        self._w3: Optional[Any] = None
+        self._live_ready = False
+
+        if not settings.trading.paper_trading_mode and settings.api.private_key and _SDK_AVAILABLE:
+            self._init_order_builder()
+
+        mode = "LIVE" if self._live_ready else "PAPER"
+        sdk_status = "OK" if self._live_ready else ("NO_SDK" if not _SDK_AVAILABLE else "SKIP(paper/no-key)")
+        self.logger.info(f"Predict.fun client initialized [{mode}] SDK={sdk_status}")
+
+    def _init_order_builder(self):
+        """Initialize predict-sdk OrderBuilder for live trading."""
+        try:
+            rpc_url = RPC_URLS_BY_CHAIN_ID.get(CHAIN_ID_BNB, "https://bsc-dataseed.bnbchain.org/")
+            self._w3 = Web3(Web3.HTTPProvider(rpc_url, request_kwargs={"timeout": 10}))
+
+            if not self._w3.is_connected():
+                for url in [
+                    "https://bsc-dataseed1.binance.org",
+                    "https://bsc-dataseed2.binance.org",
+                    "https://bsc.publicnode.com",
+                ]:
+                    w3 = Web3(Web3.HTTPProvider(url))
+                    if w3.is_connected():
+                        self._w3 = w3
+                        break
+
+            signer = Account.from_key(settings.api.private_key)
+            addresses = ADDRESSES_BY_CHAIN_ID[CHAIN_ID_BNB]
+
+            self._builder = OrderBuilder(
+                chain_id=CHAIN_ID_BNB,
+                precision=DEFAULT_PRECISION,
+                addresses=addresses,
+                generate_salt_fn=generate_order_salt,
+                logger=logging.getLogger("predict_sdk"),
+                signer=signer,
+                predict_account=settings.api.wallet_address,
+                web3=self._w3,
+            )
+            self._live_ready = True
+            self.logger.info(f"OrderBuilder initialized (RPC: {rpc_url})")
+        except Exception as e:
+            self.logger.warning(f"OrderBuilder init failed: {e}")
+            self._builder = None
+            self._live_ready = False
+
+    # ── HTTP Request Helper ─────────────────────
 
     async def _request(
         self,
@@ -54,29 +135,22 @@ class PredictFunClient(TradingLoggerMixin):
         json_data: Optional[Dict] = None,
         raw_response: bool = False,
     ) -> Any:
-        """Make API request with retry logic.
-        If raw_response=True, returns the full JSON without unwrapping 'data'.
-        """
+        """Make API request with retry logic."""
         url = f"{self.base_url}{endpoint}"
 
         last_exception = None
         for attempt in range(self.max_retries):
             try:
-                await asyncio.sleep(0.3)  # rate limit: ~3 req/s
+                await asyncio.sleep(0.3)
 
                 response = await self.client.request(
-                    method=method,
-                    url=url,
-                    params=params,
-                    json=json_data,
+                    method=method, url=url, params=params, json=json_data,
                 )
                 response.raise_for_status()
                 data = response.json()
 
                 if raw_response:
                     return data
-
-                # Predict.fun wraps some responses in {"data": ...} or {"success": true, "data": ...}
                 if isinstance(data, dict) and "data" in data:
                     return data["data"]
                 return data
@@ -85,17 +159,14 @@ class PredictFunClient(TradingLoggerMixin):
                 last_exception = e
                 if e.response.status_code == 429 or e.response.status_code >= 500:
                     sleep_time = self.backoff_factor * (2 ** attempt)
-                    self.logger.warning(
-                        f"API {e.response.status_code}, retrying in {sleep_time:.1f}s",
-                        endpoint=endpoint, attempt=attempt + 1,
-                    )
+                    self.logger.warning(f"API {e.response.status_code}, retrying in {sleep_time:.1f}s")
                     await asyncio.sleep(sleep_time)
                 else:
                     raise PredictFunAPIError(f"HTTP {e.response.status_code}: {e.response.text}")
             except Exception as e:
                 last_exception = e
                 sleep_time = self.backoff_factor * (2 ** attempt)
-                self.logger.warning(f"Request failed, retrying", error=str(e), attempt=attempt + 1)
+                self.logger.warning(f"Request failed, retrying: {e}")
                 await asyncio.sleep(sleep_time)
 
         raise PredictFunAPIError(f"Failed after {self.max_retries} retries: {last_exception}")
@@ -103,38 +174,23 @@ class PredictFunClient(TradingLoggerMixin):
     # ── Markets ──────────────────────────────────
 
     async def get_markets(
-        self,
-        limit: int = 100,
-        offset: int = 0,
-        status: str = "OPEN",
-        cursor: Optional[str] = None,
+        self, limit: int = 100, offset: int = 0, status: str = "OPEN", cursor: Optional[str] = None,
     ) -> Dict[str, Any]:
-        """
-        Get markets list. Returns dict with 'markets' key for compatibility
-        with the existing ingestion pipeline.
-        """
         params = {"limit": limit, "status": status}
         if cursor:
-            params["after"] = cursor  # Predict.fun uses 'after' for cursor pagination
+            params["after"] = cursor
 
         raw = await self._request("GET", "/v1/markets", params=params, raw_response=True)
 
-        # Response: {"success": true, "data": [...], "cursor": "base64..."}
         if isinstance(raw, list):
-            markets = raw
-            next_cursor = None
+            return {"markets": raw, "cursor": None}
         elif isinstance(raw, dict):
             markets = raw.get("data", raw.get("markets", []))
-            next_cursor = raw.get("cursor")
-        else:
-            markets = []
-            next_cursor = None
-
-        return {"markets": markets, "cursor": next_cursor}
+            return {"markets": markets, "cursor": raw.get("cursor")}
+        return {"markets": [], "cursor": None}
 
     async def get_all_open_markets(self, max_pages: int = 30) -> List[Dict]:
-        """Paginate through all open markets using cursor-based pagination."""
-        PAGE_SIZE = 20  # Predict.fun returns max 20 per page
+        PAGE_SIZE = 20
         all_markets = []
         cursor = None
 
@@ -142,11 +198,9 @@ class PredictFunClient(TradingLoggerMixin):
             result = await self.get_markets(limit=PAGE_SIZE, cursor=cursor)
             batch = result.get("markets", [])
             cursor = result.get("cursor")
-
             if not batch:
                 break
             all_markets.extend(batch)
-
             if not cursor or len(batch) < PAGE_SIZE:
                 break
 
@@ -154,7 +208,6 @@ class PredictFunClient(TradingLoggerMixin):
         return all_markets
 
     async def get_market(self, ticker: Optional[str] = None, market_id: Optional[str] = None) -> Dict[str, Any]:
-        """Get specific market data."""
         mid = ticker or market_id
         if not mid:
             raise PredictFunAPIError("ticker or market_id required")
@@ -164,22 +217,17 @@ class PredictFunClient(TradingLoggerMixin):
         return {"market": data}
 
     async def get_orderbook(self, ticker: str, depth: int = 20) -> Dict[str, Any]:
-        """Get market orderbook."""
         return await self._request("GET", f"/v1/markets/{ticker}/orderbook", params={"depth": depth})
 
     async def get_market_stats(self, ticker: str) -> Optional[Dict]:
-        """Get market stats (volume, liquidity). Separate endpoint from market detail."""
         try:
             data = await self._request("GET", f"/v1/markets/{ticker}/stats")
-            if isinstance(data, dict):
-                return data
-            return None
+            return data if isinstance(data, dict) else None
         except Exception as e:
             self.logger.debug(f"get_market_stats({ticker}) failed: {e}")
             return None
 
     async def get_market_history(self, ticker: str, limit: int = 100) -> Dict[str, Any]:
-        """Get market price history / activity."""
         data = await self._request("GET", f"/v1/markets/{ticker}/activity", params={"limit": limit})
         if isinstance(data, list):
             return {"history": data}
@@ -188,7 +236,6 @@ class PredictFunClient(TradingLoggerMixin):
     # ── Events ───────────────────────────────────
 
     async def get_events(self, limit: int = 50, offset: int = 0) -> List[Dict]:
-        """Get events (market groups)."""
         data = await self._request("GET", "/v1/events", params={"limit": limit, "offset": offset, "status": "OPEN"})
         if isinstance(data, list):
             return data
@@ -197,7 +244,6 @@ class PredictFunClient(TradingLoggerMixin):
     # ── Orderbook helpers ────────────────────────
 
     async def get_best_prices(self, ticker: str) -> Optional[Dict]:
-        """Extract best ask/bid from orderbook."""
         try:
             ob = await self.get_orderbook(ticker)
         except Exception:
@@ -228,35 +274,114 @@ class PredictFunClient(TradingLoggerMixin):
             "mid": round(((best_ask or 0) + (best_bid or 0)) / 2, 4) if best_ask and best_bid else (best_ask or best_bid),
         }
 
-    # ── Portfolio (paper mode stubs) ─────────────
+    def _build_sdk_book(self, market_id: str, ob: dict) -> Optional[Any]:
+        """Convert API orderbook response → predict_sdk.Book for SDK order calculation."""
+        if not _SDK_AVAILABLE:
+            return None
+        try:
+            def parse_levels(levels: list) -> list:
+                result = []
+                for lv in levels:
+                    if isinstance(lv, (list, tuple)) and len(lv) >= 2:
+                        price_wei = int(float(lv[0]) * WEI)
+                        size_wei = int(float(lv[1]) * WEI)
+                    elif isinstance(lv, dict):
+                        p = lv.get("price") or lv.get("p") or 0
+                        s = lv.get("size") or lv.get("quantity") or lv.get("amount") or 0
+                        price_wei = int(float(p) * WEI)
+                        size_wei = int(float(s) * WEI)
+                    else:
+                        continue
+                    if price_wei > 0 and size_wei > 0:
+                        result.append(DepthLevel((price_wei, size_wei)))
+                return result
+
+            asks = parse_levels(ob.get("asks", []))
+            bids = parse_levels(ob.get("bids", []))
+            mid_raw = ob.get("marketId") or ob.get("market_id") or market_id
+            try:
+                mid_int = int(mid_raw)
+            except (ValueError, TypeError):
+                mid_int = 0
+            ts = ob.get("updateTimestampMs") or ob.get("update_timestamp_ms") or int(time.time() * 1000)
+            return Book(market_id=mid_int, update_timestamp_ms=int(ts), asks=asks, bids=bids)
+        except Exception as e:
+            self.logger.warning(f"Book conversion failed: {e}")
+            return None
+
+    # ── Portfolio ─────────────────────────────────
 
     async def get_balance(self) -> Dict[str, Any]:
-        """Get account balance. Paper mode returns simulated balance."""
+        """Get account balance. Live mode: on-chain USDT balance via SDK/web3."""
         if settings.trading.paper_trading_mode:
             return {"balance": settings.trading.initial_bankroll}
-        # TODO: implement real balance check via SDK/API
+
+        # Live: SDK balance_of → web3 fallback
+        if self._builder and _SDK_AVAILABLE:
+            try:
+                bal_wei = self._builder.balance_of(
+                    address=settings.api.wallet_address,
+                    token_address=ADDRESSES_BY_CHAIN_ID[CHAIN_ID_BNB].USDT,
+                )
+                return {"balance": _wei_to_usdt(bal_wei)}
+            except Exception:
+                pass
+
+        if self._w3:
+            try:
+                abi = [{"inputs": [{"name": "account", "type": "address"}],
+                        "name": "balanceOf", "outputs": [{"name": "", "type": "uint256"}],
+                        "stateMutability": "view", "type": "function"}]
+                contract = self._w3.eth.contract(
+                    address=Web3.to_checksum_address(ADDRESSES_BY_CHAIN_ID[CHAIN_ID_BNB].USDT),
+                    abi=abi,
+                )
+                bal_wei = contract.functions.balanceOf(
+                    Web3.to_checksum_address(settings.api.wallet_address)
+                ).call()
+                return {"balance": _wei_to_usdt(bal_wei)}
+            except Exception as e:
+                self.logger.error(f"get_balance web3 fallback failed: {e}")
+
         return {"balance": 0}
 
     async def get_positions(self, ticker: Optional[str] = None) -> Dict[str, Any]:
-        """Get portfolio positions. Paper mode returns empty."""
         if settings.trading.paper_trading_mode:
             return {"positions": []}
-        # TODO: implement real position check
-        return {"positions": []}
+        try:
+            data = await self._request(
+                "GET", "/v1/positions",
+                params={"wallet": settings.api.wallet_address},
+            )
+            if isinstance(data, list):
+                return {"positions": data}
+            return {"positions": data.get("positions", [])}
+        except Exception as e:
+            self.logger.error(f"get_positions failed: {e}")
+            return {"positions": []}
 
     async def get_fills(self, ticker: Optional[str] = None, limit: int = 100) -> Dict[str, Any]:
-        """Get order fills."""
         return {"fills": []}
 
     async def get_orders(self, ticker: Optional[str] = None, status: Optional[str] = None) -> Dict[str, Any]:
-        """Get orders."""
         return {"orders": []}
 
     async def get_trades(self, ticker: Optional[str] = None, limit: int = 100, cursor: Optional[str] = None) -> Dict[str, Any]:
-        """Get trade history."""
         return {"trades": []}
 
-    # ── Order execution (paper only for now) ─────
+    # ── Approvals ────────────────────────────────
+
+    async def ensure_approvals(self):
+        """Set ERC20/ERC1155 approvals for live trading."""
+        if settings.trading.paper_trading_mode or not self._builder:
+            return
+        try:
+            result = self._builder.set_approvals()
+            self.logger.info(f"Approvals set: {result}")
+        except Exception as e:
+            self.logger.warning(f"ensure_approvals failed: {e}")
+
+    # ── Order execution ──────────────────────────
 
     async def place_order(
         self,
@@ -271,138 +396,288 @@ class PredictFunClient(TradingLoggerMixin):
         expiration_ts: Optional[int] = None,
     ) -> Dict[str, Any]:
         """
-        Place order with realistic paper simulation.
+        Place order — Paper simulation or Live via predict-sdk.
 
-        현실 비용 시뮬레이션 (90%+ 유사도 목표):
-        1. 실제 오더북에서 체결가 추정 (best ask/bid)
-        2. 슬리피지 적용 (오더북 depth 기반, 최소 1%)
-        3. 거래 수수료 (마켓별 feeRateBps, 기본 2%)
-        4. 가스비 (BNB Chain ~$0.10/tx)
-        5. 스프레드 반영 (bid-ask 차이)
+        Args:
+            ticker: market ID
+            client_order_id: unique order ID
+            side: "yes" or "no"
+            action: "buy" or "sell"
+            count: number of contracts (shares)
+            type_: "market" or "limit"
+            yes_price: price in cents (0-100) for YES side
+            no_price: price in cents (0-100) for NO side
         """
+
         if settings.trading.paper_trading_mode:
-            # ── 1. 실제 오더북에서 체결가 추정 ──
-            intended_price = (yes_price or 50) / 100.0 if yes_price else 0.50
-            actual_price = intended_price
-            spread = 0.0
-
-            try:
-                ob = await self.get_orderbook(ticker)
-                if ob and isinstance(ob, dict):
-                    asks = ob.get("asks", [])
-                    bids = ob.get("bids", [])
-
-                    def _first(levels):
-                        if not levels:
-                            return None
-                        lv = levels[0]
-                        if isinstance(lv, (list, tuple)):
-                            return float(lv[0])
-                        if isinstance(lv, dict):
-                            return float(lv.get("price") or lv.get("p") or 0) or None
-                        return None
-
-                    best_ask = _first(asks)
-                    best_bid = _first(bids)
-
-                    is_buy = action.lower() == "buy"
-                    is_yes = side.lower() in ("yes", "up", "above")
-
-                    if is_buy:
-                        # BUY YES → pay ask, BUY NO → pay 1-bid
-                        if is_yes and best_ask:
-                            actual_price = best_ask
-                        elif not is_yes and best_bid:
-                            actual_price = max(1.0 - best_bid, 0.01)
-                        elif best_ask:
-                            actual_price = best_ask
-                    else:
-                        # SELL YES → receive bid, SELL NO → receive 1-ask
-                        if is_yes and best_bid:
-                            actual_price = best_bid
-                        elif not is_yes and best_ask:
-                            actual_price = max(1.0 - best_ask, 0.01)
-                        elif best_bid:
-                            actual_price = best_bid
-
-                    # Spread 계산
-                    if best_ask and best_bid:
-                        spread = round(best_ask - best_bid, 4)
-
-            except Exception as e:
-                self.logger.debug(f"Orderbook fetch failed for paper order, using intended price: {e}")
-
-            # ── 2. 슬리피지 적용 (최소 1%, 스프레드 비례) ──
-            # 실제 환경: 소량은 1~2%, 대량은 3~5%
-            base_slippage = max(0.01, spread * 0.5)  # 스프레드의 50% or 최소 1%
-            # 수량 기반 추가 슬리피지 (10 contracts 이상이면 추가)
-            size_slippage = min(0.03, count * 0.001)  # 최대 3% 추가
-            total_slippage = base_slippage + size_slippage
-
-            if action.lower() == "buy":
-                actual_price = min(actual_price * (1 + total_slippage), 0.99)
-            else:
-                actual_price = max(actual_price * (1 - total_slippage), 0.01)
-
-            actual_price = round(actual_price, 4)
-
-            # ── 3. 거래 수수료 (마켓별 feeRateBps 조회) ──
-            fee_bps = 200  # 기본 2%
-            try:
-                mkt = await self.get_market(ticker=ticker)
-                mkt_data = mkt.get("market", mkt) if isinstance(mkt, dict) else {}
-                fee_bps = int(mkt_data.get("feeRateBps", 200))
-            except Exception:
-                pass
-
-            trade_value = count * actual_price
-            fee = trade_value * fee_bps / 10_000
-            fee = round(fee, 4)
-
-            # ── 4. 가스비 (BNB Chain, ~$0.05~0.15) ──
-            gas_fee = 0.10  # 고정 $0.10 (평균치)
-
-            # ── 5. 총 비용 계산 ──
-            total_cost = fee + gas_fee
-            net_value = trade_value - total_cost if action.lower() == "buy" else trade_value + total_cost
-
-            self.logger.info(
-                f"[PAPER] {action.upper()} {count}x {side.upper()} @ {actual_price:.4f} "
-                f"(intended={intended_price:.4f}, slip={total_slippage:.1%}, "
-                f"fee=${fee:.4f}, gas=${gas_fee:.2f}, spread={spread:.4f})"
+            return await self._paper_order(
+                ticker, client_order_id, side, action, count, type_, yes_price, no_price
             )
 
-            return {
-                "order": {
-                    "order_id": f"paper_{int(time.time())}_{ticker}",
-                    "ticker": ticker,
-                    "side": side,
-                    "action": action,
-                    "count": count,
-                    "price": actual_price,
-                    "intended_price": intended_price,
-                    "status": "filled",
-                    "paper": True,
-                    # 비용 상세
-                    "trade_value": round(trade_value, 4),
-                    "fee": fee,
-                    "fee_bps": fee_bps,
-                    "gas_fee": gas_fee,
-                    "total_cost": round(total_cost, 4),
-                    "net_value": round(net_value, 4),
-                    "slippage_pct": round(total_slippage * 100, 2),
-                    "spread": spread,
-                }
-            }
-
-        raise PredictFunAPIError(
-            "Live trading not yet implemented. "
-            "Use paper mode or implement Predict.fun order API here."
+        # ── LIVE ORDER via predict-sdk ──
+        return await self._live_order(
+            ticker, client_order_id, side, action, count, type_, yes_price, no_price
         )
 
+    async def _paper_order(
+        self, ticker, client_order_id, side, action, count, type_, yes_price, no_price
+    ) -> Dict[str, Any]:
+        """Paper mode: realistic simulation with orderbook, slippage, fees."""
+        intended_price = (yes_price or no_price or 50) / 100.0
+        actual_price = intended_price
+        spread = 0.0
+
+        try:
+            ob = await self.get_orderbook(ticker)
+            if ob and isinstance(ob, dict):
+                asks = ob.get("asks", [])
+                bids = ob.get("bids", [])
+
+                def _first(levels):
+                    if not levels:
+                        return None
+                    lv = levels[0]
+                    if isinstance(lv, (list, tuple)):
+                        return float(lv[0])
+                    if isinstance(lv, dict):
+                        return float(lv.get("price") or lv.get("p") or 0) or None
+                    return None
+
+                best_ask = _first(asks)
+                best_bid = _first(bids)
+                is_buy = action.lower() == "buy"
+                is_yes = side.lower() in ("yes", "up", "above")
+
+                if is_buy:
+                    if is_yes and best_ask:
+                        actual_price = best_ask
+                    elif not is_yes and best_bid:
+                        actual_price = max(1.0 - best_bid, 0.01)
+                    elif best_ask:
+                        actual_price = best_ask
+                else:
+                    if is_yes and best_bid:
+                        actual_price = best_bid
+                    elif not is_yes and best_ask:
+                        actual_price = max(1.0 - best_ask, 0.01)
+                    elif best_bid:
+                        actual_price = best_bid
+
+                if best_ask and best_bid:
+                    spread = round(best_ask - best_bid, 4)
+        except Exception:
+            pass
+
+        # Slippage
+        base_slippage = max(0.01, spread * 0.5)
+        size_slippage = min(0.03, count * 0.001)
+        total_slippage = base_slippage + size_slippage
+
+        if action.lower() == "buy":
+            actual_price = min(actual_price * (1 + total_slippage), 0.99)
+        else:
+            actual_price = max(actual_price * (1 - total_slippage), 0.01)
+        actual_price = round(actual_price, 4)
+
+        # Fees
+        fee_bps = 200
+        try:
+            mkt = await self.get_market(ticker=ticker)
+            mkt_data = mkt.get("market", mkt) if isinstance(mkt, dict) else {}
+            fee_bps = int(mkt_data.get("feeRateBps", 200))
+        except Exception:
+            pass
+
+        trade_value = count * actual_price
+        fee = round(trade_value * fee_bps / 10_000, 4)
+        gas_fee = 0.10
+
+        self.logger.info(
+            f"[PAPER] {action.upper()} {count}x {side.upper()} @ {actual_price:.4f} "
+            f"(slip={total_slippage:.1%}, fee=${fee:.4f}, gas=${gas_fee:.2f})"
+        )
+
+        return {
+            "order": {
+                "order_id": client_order_id,
+                "ticker": ticker,
+                "side": side,
+                "action": action,
+                "count": count,
+                "price": actual_price,
+                "intended_price": intended_price,
+                "status": "filled",
+                "paper": True,
+                "trade_value": round(trade_value, 4),
+                "fee": fee,
+                "fee_bps": fee_bps,
+                "gas_fee": gas_fee,
+                "total_cost": round(fee + gas_fee, 4),
+                "slippage_pct": round(total_slippage * 100, 2),
+                "spread": spread,
+            }
+        }
+
+    async def _live_order(
+        self, ticker, client_order_id, side, action, count, type_, yes_price, no_price
+    ) -> Dict[str, Any]:
+        """Live order via predict-sdk: sign EIP-712 typed data → POST /v1/orders."""
+        if not self._live_ready or not self._builder:
+            raise PredictFunAPIError(
+                "Live trading not ready. Check PRIVATE_KEY, WALLET_ADDRESS, and predict-sdk installation."
+            )
+
+        is_buy = action.lower() == "buy"
+        sdk_side = SdkSide.BUY if is_buy else SdkSide.SELL
+        price = (yes_price or no_price or 50) / 100.0
+        size_usdt = count * price
+
+        # 1. Market info (token_id, fee_rate_bps)
+        try:
+            mkt_resp = await self.get_market(ticker=ticker)
+            market = mkt_resp.get("market", mkt_resp) if isinstance(mkt_resp, dict) else {}
+        except Exception as e:
+            raise PredictFunAPIError(f"Failed to fetch market {ticker}: {e}")
+
+        outcomes = market.get("outcomes", [])
+        fee_rate_bps = int(market.get("feeRateBps") or 200)
+        precision = int(market.get("decimalPrecision") or DEFAULT_PRECISION)
+
+        # Resolve token_id from side
+        is_yes = side.lower() in ("yes", "up", "above")
+        token_id = None
+        if is_yes:
+            yes_outcome = next(
+                (o for o in outcomes if o.get("name", "").upper() in ("YES", "UP", "ABOVE")),
+                outcomes[0] if outcomes else None,
+            )
+            token_id = yes_outcome.get("onChainId") if yes_outcome else None
+        else:
+            no_outcome = next(
+                (o for o in outcomes if o.get("name", "").upper() in ("NO", "DOWN", "BELOW")),
+                outcomes[1] if len(outcomes) > 1 else None,
+            )
+            token_id = no_outcome.get("onChainId") if no_outcome else None
+
+        if not token_id:
+            # Fallback: first outcome
+            if outcomes:
+                token_id = outcomes[0].get("onChainId")
+        if not token_id:
+            raise PredictFunAPIError(f"No onChainId found for market {ticker}, outcomes: {outcomes}")
+
+        # Sync precision
+        try:
+            self._builder._precision = precision
+        except Exception:
+            pass
+
+        # 2. Orderbook → SDK Book
+        try:
+            ob = await self.get_orderbook(ticker)
+        except Exception as e:
+            raise PredictFunAPIError(f"Orderbook fetch failed: {e}")
+
+        book = self._build_sdk_book(ticker, ob)
+        if not book:
+            raise PredictFunAPIError("Failed to build SDK Book from orderbook")
+
+        # 3. Calculate order amounts
+        slippage_bps = 300  # 3% default
+        try:
+            if type_.lower() == "limit":
+                amounts = self._builder.get_limit_order_amounts(
+                    LimitHelperInput(
+                        side=sdk_side,
+                        price_per_share_wei=int(price * WEI),
+                        quantity_wei=_usdt_to_wei(count),
+                    )
+                )
+            elif is_buy:
+                amounts = self._builder.get_market_order_amounts(
+                    MarketHelperValueInput(
+                        side=SdkSide.BUY,
+                        value_wei=_usdt_to_wei(size_usdt),
+                        slippage_bps=slippage_bps,
+                    ),
+                    book,
+                )
+            else:
+                shares_wei = _usdt_to_wei(count)
+                amounts = self._builder.get_market_order_amounts(
+                    MarketHelperInput(
+                        side=SdkSide.SELL,
+                        quantity_wei=shares_wei,
+                        slippage_bps=slippage_bps,
+                    ),
+                    book,
+                )
+        except Exception as e:
+            raise PredictFunAPIError(f"Order amount calculation failed: {e}")
+
+        # 4. Sign EIP-712 typed data
+        try:
+            typed_data = self._builder.build_typed_data(BuildOrderInput(
+                side=sdk_side,
+                token_id=token_id,
+                maker_amount=amounts.maker_amount,
+                taker_amount=amounts.taker_amount,
+                fee_rate_bps=fee_rate_bps,
+            ))
+            signed: SignedOrder = self._builder.sign_typed_data_order(typed_data)
+        except Exception as e:
+            raise PredictFunAPIError(f"Order signing failed: {e}")
+
+        # 5. POST /v1/orders
+        try:
+            payload = signed.model_dump() if hasattr(signed, "model_dump") else signed.__dict__
+            response = await self.client.post(
+                f"{self.base_url}/v1/orders",
+                json=payload,
+                timeout=15.0,
+            )
+            response.raise_for_status()
+            result = response.json()
+            self.logger.info(f"[LIVE] Order response: {result}")
+        except Exception as e:
+            raise PredictFunAPIError(f"POST /v1/orders failed: {e}")
+
+        # 6. Normalize response to expected format
+        order_id = (
+            result.get("orderId") or result.get("order_id") or
+            result.get("id") or client_order_id
+        )
+        status = result.get("status", "matched")
+
+        return {
+            "order": {
+                "order_id": order_id,
+                "ticker": ticker,
+                "side": side,
+                "action": action,
+                "count": count,
+                "price": price,
+                "status": status,
+                "paper": False,
+                "trade_value": round(size_usdt, 4),
+                "fee": round(size_usdt * fee_rate_bps / 10_000, 4),
+                "gas_fee": 0.10,
+            }
+        }
+
     async def cancel_order(self, order_id: str) -> Dict[str, Any]:
-        """Cancel order."""
-        return {"status": "cancelled", "order_id": order_id}
+        if settings.trading.paper_trading_mode:
+            return {"status": "cancelled", "order_id": order_id}
+        try:
+            response = await self.client.post(
+                f"{self.base_url}/v1/orders/remove",
+                json={"orderId": order_id},
+                timeout=10.0,
+            )
+            return {"status": "cancelled" if response.status_code == 200 else "failed", "order_id": order_id}
+        except Exception as e:
+            self.logger.error(f"cancel_order failed: {e}")
+            return {"status": "failed", "order_id": order_id}
 
     # ── Lifecycle ────────────────────────────────
 
