@@ -9,10 +9,13 @@ Provides: TradingDecision, DailyUsageTracker, GeminiClient (aliased as XAIClient
 import json
 import time
 import os
+import random
 # pickle removed (C1 security fix) — using JSON instead
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 from datetime import datetime, date, timedelta
+
+_MAX_RETRIES = 3
 
 from src.config.settings import settings
 from src.utils.logging_setup import TradingLoggerMixin
@@ -256,19 +259,42 @@ class GeminiClient(TradingLoggerMixin):
             import asyncio
             from google.genai import types
 
-            t0 = time.time()
-            response = await asyncio.wait_for(
-                self._client.aio.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        temperature=settings.trading.ai_temperature,
-                        top_p=0.95,
-                        max_output_tokens=32768,
-                    ),
-                ),
-                timeout=60.0,
+            gen_config = types.GenerateContentConfig(
+                temperature=settings.trading.ai_temperature,
+                top_p=0.95,
+                max_output_tokens=32768,
             )
+
+            # 503/429 retry with exponential backoff (폴리마켓 동일)
+            response = None
+            t0 = time.time()
+            for attempt in range(_MAX_RETRIES):
+                try:
+                    response = await asyncio.wait_for(
+                        self._client.aio.models.generate_content(
+                            model=self.model_name,
+                            contents=prompt,
+                            config=gen_config,
+                        ),
+                        timeout=120.0,
+                    )
+                    break
+                except asyncio.TimeoutError:
+                    self.logger.error("Gemini timeout")
+                    return TradingDecision(action="hold", side="n/a", confidence=0.0)
+                except Exception as retry_err:
+                    err_str = str(retry_err)
+                    if ("503" in err_str or "429" in err_str or "UNAVAILABLE" in err_str) and attempt < _MAX_RETRIES - 1:
+                        delay = 2 * (2 ** attempt) + random.uniform(0, 1)
+                        self.logger.warning(
+                            f"[RETRY {attempt+1}/{_MAX_RETRIES}] "
+                            f"503/429 → {delay:.1f}s 대기 후 재시도"
+                        )
+                        await asyncio.sleep(delay)
+                        continue
+                    raise
+            if response is None:
+                return TradingDecision(action="hold", side="n/a", confidence=0.0)
             elapsed = time.time() - t0
 
             # Cost tracking (H4: _last_decision_cost에 개별 비용 저장)

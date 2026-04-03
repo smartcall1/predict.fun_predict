@@ -588,7 +588,9 @@ class PredictFunClient(TradingLoggerMixin):
 
         outcomes = market.get("outcomes", [])
         fee_rate_bps = int(market.get("feeRateBps") or 200)
-        precision = int(market.get("decimalPrecision") or DEFAULT_PRECISION)
+        # decimalPrecision은 가격 표시용 소수점 자릿수 (2~3)이며, 토큰 decimals가 아님
+        # BNB Chain USDT는 항상 18 decimals → DEFAULT_PRECISION 사용
+        precision = DEFAULT_PRECISION
 
         # Resolve token_id from side
         is_yes = side.lower() in ("yes", "up", "above")
