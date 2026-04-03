@@ -25,7 +25,7 @@ from src.paper.tracker import (
     settle_signal,
     take_profit_signal,
     time_exit_signal,
-    check_time_exits,
+    check_time_exits,  # noqa: F401 — tracker 단독 실행용 보존
     get_pending_signals,
     get_all_signals,
     get_stats,
@@ -185,13 +185,6 @@ async def check_settlements():
     client = KalshiClient()
     settled_count = 0
 
-    # ── 72시간 초과 강제 청산 (현재가 조회 불가한 건 본전 청산) ──
-    time_exited = check_time_exits(max_hold_hours=72)
-    settled_count += len(time_exited)
-
-    # pending 목록 재조회 (time exit으로 빠진 건 제외)
-    pending = get_pending_signals()
-
     for sig in pending:
         try:
             entry = sig.get("entry_price", 0)
@@ -206,45 +199,82 @@ async def check_settlements():
             tp_price = exit_levels['take_profit_price']
             sl_price = exit_levels['stop_loss_price']
 
+            # 현재가 조회 (오더북 mid → 실패 시 lastPrice 폴백)
+            current_price = None
             try:
                 prices = await client.get_best_prices(sig["market_id"])
                 if prices and prices.get("mid"):
                     current_yes = prices["mid"]
                     current_price = current_yes if side == "YES" else (1.0 - current_yes)
-
-                    # ── 익절: TP 도달 (15~30%) ──
-                    tp_triggered = (current_price >= tp_price) if side == "YES" else (current_price <= tp_price)
-                    if tp_triggered:
-                        take_profit_signal(sig["id"], current_price)
-                        pnl = current_price - entry
-                        logger.info(f"💰 TAKE PROFIT #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (TP={tp_price:.2f}, PnL={pnl:+.2f})")
-                        tg.notify_settlement(
-                            market_title=sig.get("market_title", ""),
-                            side=sig["side"], entry_price=entry,
-                            exit_price=current_price, pnl=pnl, result="WIN",
-                        )
-                        settled_count += 1
-                        continue
-
-                    # ── 손절: SL 도달 (5~10%) ──
-                    sl_triggered = StopLossCalculator.is_stop_loss_triggered(
-                        position_side=side, entry_price=entry,
-                        current_price=current_price, stop_loss_price=sl_price,
-                    )
-                    if sl_triggered:
-                        take_profit_signal(sig["id"], current_price)
-                        pnl = current_price - entry
-                        logger.info(f"🛑 STOP LOSS #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (SL={sl_price:.2f}, PnL={pnl:+.2f})")
-                        tg.notify_settlement(
-                            market_title=sig.get("market_title", ""),
-                            side=sig["side"], entry_price=entry,
-                            exit_price=current_price, pnl=pnl, result="LOSS",
-                        )
-                        settled_count += 1
-                        continue
-
             except Exception as e:
-                logger.debug(f"Price check failed for {sig['market_id']}: {e}")
+                logger.debug(f"Orderbook price failed for {sig['market_id']}: {e}")
+            if current_price is None:
+                try:
+                    mkt_resp = await client.get_market(ticker=sig["market_id"])
+                    mkt = mkt_resp.get("market", {}) if isinstance(mkt_resp, dict) else {}
+                    lp = mkt.get("lastPrice") or mkt.get("last_price")
+                    if lp is not None:
+                        current_yes = float(lp)
+                        current_price = current_yes if side == "YES" else (1.0 - current_yes)
+                        logger.debug(f"lastPrice fallback for {sig['market_id']}: {current_price:.4f}")
+                except Exception as e:
+                    logger.debug(f"lastPrice fallback failed for {sig['market_id']}: {e}")
+
+            # ── 72시간 초과 강제 청산 (현재가 필수 — 없으면 다음 사이클 재시도) ──
+            try:
+                ts = datetime.fromisoformat(sig["timestamp"])
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=timezone.utc)
+                hours_held = (datetime.now(timezone.utc) - ts).total_seconds() / 3600
+                if hours_held >= 72:
+                    if current_price is None:
+                        logger.warning(f"⏰ TIME EXIT 대기 #{sig['id']}: {sig['market_title'][:40]} | {hours_held:.0f}h 초과, 현재가 조회 실패 → 다음 사이클 재시도")
+                        continue
+                    time_exit_signal(sig["id"], current_price)
+                    pnl = current_price - entry
+                    logger.info(f"⏰ TIME EXIT #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} ({hours_held:.0f}h, PnL={pnl:+.2f})")
+                    tg.notify_settlement(
+                        market_title=sig.get("market_title", ""),
+                        side=sig["side"], entry_price=entry,
+                        exit_price=current_price, pnl=pnl,
+                        result="WIN" if pnl > 0 else "LOSS",
+                    )
+                    settled_count += 1
+                    continue
+            except Exception as e:
+                logger.warning(f"Time exit check failed for #{sig['id']}: {e}")
+
+            if current_price is not None:
+                # ── 익절: TP 도달 (15~30%) ──
+                tp_triggered = (current_price >= tp_price) if side == "YES" else (current_price <= tp_price)
+                if tp_triggered:
+                    take_profit_signal(sig["id"], current_price)
+                    pnl = current_price - entry
+                    logger.info(f"💰 TAKE PROFIT #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (TP={tp_price:.2f}, PnL={pnl:+.2f})")
+                    tg.notify_settlement(
+                        market_title=sig.get("market_title", ""),
+                        side=sig["side"], entry_price=entry,
+                        exit_price=current_price, pnl=pnl, result="WIN",
+                    )
+                    settled_count += 1
+                    continue
+
+                # ── 손절: SL 도달 (5~10%) ──
+                sl_triggered = StopLossCalculator.is_stop_loss_triggered(
+                    position_side=side, entry_price=entry,
+                    current_price=current_price, stop_loss_price=sl_price,
+                )
+                if sl_triggered:
+                    take_profit_signal(sig["id"], current_price)
+                    pnl = current_price - entry
+                    logger.info(f"🛑 STOP LOSS #{sig['id']}: {sig['market_title'][:40]} @ {current_price:.2f} (SL={sl_price:.2f}, PnL={pnl:+.2f})")
+                    tg.notify_settlement(
+                        market_title=sig.get("market_title", ""),
+                        side=sig["side"], entry_price=entry,
+                        exit_price=current_price, pnl=pnl, result="LOSS",
+                    )
+                    settled_count += 1
+                    continue
 
             # ── 마켓 정산 체크 (기존 로직) ──
             response = await client.get_market(ticker=sig["market_id"])
