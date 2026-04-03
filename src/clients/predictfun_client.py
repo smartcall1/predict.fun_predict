@@ -326,9 +326,10 @@ class PredictFunClient(TradingLoggerMixin):
                     token="USDT",
                     address=settings.api.wallet_address,
                 )
+                self.logger.info(f"balance_of_async raw: {bal_wei}")
                 return {"balance": _wei_to_usdt(bal_wei)}
-            except Exception:
-                pass
+            except Exception as e:
+                self.logger.warning(f"balance_of_async failed: {e}")
 
         if self._w3:
             try:
