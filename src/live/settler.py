@@ -58,13 +58,16 @@ class PositionSettler:
         resolution = mkt.get("resolution")
         status = str(mkt.get("status", "")).upper()
 
-        # Get current price
+        # Get current price (exit 기준: YES=yes_bid, NO=1-yes_ask)
         current_price = entry_price
         try:
             prices = await self.client.get_best_prices(market_id)
-            if prices and prices.get("mid"):
-                yes_price = prices["mid"]
-                current_price = yes_price if side == "YES" else (1.0 - yes_price)
+            if prices:
+                if side == "YES":
+                    current_price = prices.get("yes_bid") or prices.get("mid") or entry_price
+                else:
+                    yes_ask = prices.get("yes_ask")
+                    current_price = (1.0 - yes_ask) if yes_ask else entry_price
         except Exception:
             pass
 

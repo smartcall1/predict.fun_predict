@@ -134,13 +134,17 @@ class LiveExecutor:
             return None
 
     async def get_current_price(self, market_id: str) -> Optional[Dict]:
-        """Get current YES/NO prices from orderbook."""
+        """Get current YES/NO prices from orderbook (exit 기준)."""
         try:
             prices = await self.client.get_best_prices(market_id)
             if prices:
+                yes_bid = prices.get("yes_bid")
+                yes_ask = prices.get("yes_ask")
+                # YES 현재가 = yes_bid (YES를 팔 수 있는 가격)
+                # NO 현재가 = 1 - yes_ask (NO를 팔 수 있는 가격)
                 return {
-                    "yes_price": prices.get("mid") or prices.get("yes_ask"),
-                    "no_price": 1.0 - (prices.get("mid") or prices.get("yes_ask") or 0.5),
+                    "yes_price": yes_bid or prices.get("mid"),
+                    "no_price": (1.0 - yes_ask) if yes_ask else (1.0 - (prices.get("mid") or 0.5)),
                     "spread": prices.get("spread"),
                 }
         except Exception:
