@@ -98,8 +98,31 @@ class LiveExecutor:
         reason: str = "manual",
     ) -> Optional[Dict]:
         """Execute a SELL order to close position."""
+        # 온체인 실제 보유량 확인 → 부분 체결 대응
+        actual_qty = quantity
+        if not self.paper_mode:
+            try:
+                pos_resp = await self.client.get_positions()
+                for p in pos_resp.get("positions", []):
+                    m = p.get("market", {})
+                    o = p.get("outcome", {})
+                    if str(m.get("id")) == str(market_id):
+                        oname = (o.get("name") or "").upper()
+                        pos_side = "YES" if oname in ("YES", "UP", "ABOVE") else "NO"
+                        if pos_side == side.upper():
+                            on_chain = int(p.get("amount", "0")) / 10**18
+                            if on_chain < actual_qty and on_chain > 0:
+                                logger.info(f"Adjusting sell qty: {actual_qty} → {on_chain:.4f} (on-chain)")
+                                actual_qty = on_chain
+                            elif on_chain == 0:
+                                logger.warning(f"No on-chain balance for {market_id} {side}")
+                                return None
+                            break
+            except Exception as e:
+                logger.warning(f"On-chain balance check failed: {e}")
+
         logger.info(f"{'[PAPER]' if self.paper_mode else '[LIVE]'} "
-                     f"SELL {quantity}x {side} @ {price:.4f} ({reason})")
+                     f"SELL {actual_qty}x {side} @ {price:.4f} ({reason})")
 
         try:
             yes_price = int(round(price * 100)) if side.upper() == "YES" else None
@@ -110,7 +133,7 @@ class LiveExecutor:
                 client_order_id=f"exit_{int(time.time())}_{market_id}",
                 side=side.lower(),
                 action="sell",
-                count=quantity,
+                count=actual_qty,
                 type_="market",
                 yes_price=yes_price,
                 no_price=no_price,
