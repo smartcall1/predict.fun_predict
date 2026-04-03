@@ -38,7 +38,7 @@ except ImportError:
 
 CHAIN_ID_BNB = ChainId.BNB_MAINNET if _SDK_AVAILABLE else None
 WEI = 10 ** 18
-DEFAULT_PRECISION = 5
+DEFAULT_PRECISION = 18  # BNB Chain USDT = 18 decimals
 
 
 def _usdt_to_wei(amount: float) -> int:

@@ -48,7 +48,7 @@ logger = logging.getLogger("auto_redeem")
 # ── 상수 ────────────────────────────────────────────────────────────────────
 CHAIN_ID_BNB = ChainId.BNB_MAINNET if SDK_AVAILABLE else None
 POLL_INTERVAL = 7200  # 2시간
-DEFAULT_PRECISION = 5
+DEFAULT_PRECISION = 18  # BNB Chain USDT = 18 decimals
 
 
 # ── 텔레그램 ────────────────────────────────────────────────────────────────
