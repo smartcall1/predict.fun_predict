@@ -319,12 +319,12 @@ class PredictFunClient(TradingLoggerMixin):
         if settings.trading.paper_trading_mode:
             return {"balance": settings.trading.initial_bankroll}
 
-        # Live: SDK balance_of → web3 fallback
+        # Live: SDK balance_of_async → web3 fallback
         if self._builder and _SDK_AVAILABLE:
             try:
-                bal_wei = self._builder.balance_of(
+                bal_wei = await self._builder.balance_of_async(
+                    token="USDT",
                     address=settings.api.wallet_address,
-                    token_address=ADDRESSES_BY_CHAIN_ID[CHAIN_ID_BNB].USDT,
                 )
                 return {"balance": _wei_to_usdt(bal_wei)}
             except Exception:
