@@ -29,6 +29,7 @@ try:
         LimitHelperInput, MarketHelperInput, MarketHelperValueInput,
         Book, DepthLevel, SignedOrder,
     )
+    from predict_sdk.order_builder import make_contracts
     from eth_account import Account
     from web3 import Web3
     _SDK_AVAILABLE = True
@@ -107,6 +108,7 @@ class PredictFunClient(TradingLoggerMixin):
 
             signer = Account.from_key(settings.api.private_key)
             addresses = ADDRESSES_BY_CHAIN_ID[CHAIN_ID_BNB]
+            contracts = make_contracts(self._w3, addresses, signer)
 
             self._builder = OrderBuilder(
                 chain_id=CHAIN_ID_BNB,
@@ -116,6 +118,7 @@ class PredictFunClient(TradingLoggerMixin):
                 logger=logging.getLogger("predict_sdk"),
                 signer=signer,
                 predict_account=settings.api.wallet_address,
+                contracts=contracts,
                 web3=self._w3,
             )
             self._live_ready = True
