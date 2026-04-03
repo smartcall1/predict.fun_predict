@@ -116,10 +116,9 @@ class LiveTrader:
             f"{sep}\n"
             f"🤖 AI 앙상블: ${total_pnl:+.2f} ({wins}W/{losses}L, {win_rate:.0f}%)\n"
             f"📉 미실현 PnL: ${unrealized:+.2f}\n"
-            f"💸 AI 비용: ${ai_cost:.4f} | 순PnL: ${net_pnl:+.2f}\n"
             f"{roi_line}"
             f"{sep}\n"
-            f"📌 포지션: {pos_count}/{settings.trading.max_positions}개\n"
+            f"📌 포지션: {pos_count}개\n"
             f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)"
         )
 
@@ -200,8 +199,6 @@ class LiveTrader:
             f"승률: {win_rate:.1f}%\n"
             f"{sep}\n"
             f"실현 PnL: ${total_pnl:+.2f}\n"
-            f"AI 비용: ${ai_cost:.4f}\n"
-            f"순 PnL: ${net_pnl:+.2f}\n"
             f"최고 잔고: ${peak:.2f}\n"
             f"{sep}"
         )
@@ -222,10 +219,12 @@ class LiveTrader:
         await self.db.initialize()
         self.gemini = GeminiClient(db_manager=self.db)
 
-        # Sync bankroll
+        # Sync bankroll — 항상 실제 잔고로 동기화
         balance = await self.executor.get_balance()
-        if self.state.bankroll == 0:
-            self.state.init_bankroll(balance or settings.trading.initial_bankroll)
+        if balance and balance > 0:
+            self.state.bankroll = balance
+        elif self.state.bankroll == 0:
+            self.state.init_bankroll(settings.trading.initial_bankroll)
         logger.info(f"Bankroll: ${self.state.bankroll:.2f}")
 
         # Live mode: ensure on-chain approvals
