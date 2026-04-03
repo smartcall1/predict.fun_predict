@@ -94,7 +94,7 @@ class LiveExecutor:
         market_id: str,
         side: str,
         price: float,
-        quantity: int,
+        quantity: float,
         reason: str = "manual",
     ) -> Optional[Dict]:
         """Execute a SELL order to close position."""

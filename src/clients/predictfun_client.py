@@ -484,7 +484,7 @@ class PredictFunClient(TradingLoggerMixin):
         client_order_id: str,
         side: str,
         action: str,
-        count: int,
+        count: float,
         type_: str = "market",
         yes_price: Optional[int] = None,
         no_price: Optional[int] = None,
