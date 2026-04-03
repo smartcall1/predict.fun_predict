@@ -161,6 +161,8 @@ class LiveExecutor:
         """Get available balance."""
         try:
             resp = await self.client.get_balance()
+            logger.info(f"get_balance resp: {resp}")
             return float(resp.get("balance", 0))
-        except Exception:
+        except Exception as e:
+            logger.warning(f"get_balance failed: {e}")
             return 0.0

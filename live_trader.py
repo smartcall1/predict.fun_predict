@@ -18,7 +18,7 @@ import os
 import sys
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timezone
 
 from src.config.settings import settings
 from src.utils.logging_setup import setup_logging, get_trading_logger
@@ -119,7 +119,7 @@ class LiveTrader:
             f"{roi_line}"
             f"{sep}\n"
             f"📌 포지션: {pos_count}개\n"
-            f"🕒 {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')} (UTC)"
+            f"🕒 {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S')} (UTC)"
         )
 
     def _cmd_trades(self):
