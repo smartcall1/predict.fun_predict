@@ -88,35 +88,32 @@ class TelegramUI:
     def notify_trade(self, side: str, market_title: str, price: float,
                      confidence: float, quantity: int, reasoning: str = "",
                      ai_target: float = 0, edge: float = 0):
-        """거래 알림 — 간결한 Result 형식."""
-        emoji = "\U0001f7e2" if side.upper() == "YES" else "\U0001f534"
+        """거래 알림 — 폴리마켓 동기화 형식."""
         cost = quantity * price
-        # AI fair value 기반 목표가
-        if ai_target > 0:
-            fair_value = ai_target if side.upper() == "YES" else (1.0 - ai_target)
-            target_price = price + 0.60 * max(0, fair_value - price)
-            target_str = f"{target_price:.2f}"
-        else:
-            target_str = "-"
-        # Reasoning 첫 문장만
-        short_reason = reasoning.split(".")[0].split("\n")[0].strip()[:120] if reasoning else "-"
         self.send(
-            f"{emoji} <b>BUY {side.upper()}</b>\n\n"
-            f"<b>Market:</b> {self._esc(market_title[:80])}\n"
-            f"<b>Entry:</b> {price:.2f} x {quantity} = ${cost:.2f}\n"
-            f"<b>Target:</b> {target_str} | <b>Edge:</b> {edge:+.1%}\n"
-            f"<b>Result:</b> {self._esc(short_reason)}"
+            f"\U0001f916 <b>[OPEN] AI 앙상블</b>\n"
+            f"\U0001f4c4 마켓: {self._esc(market_title[:80])}\n"
+            f"\U0001f48e 방향: {side.upper()}\n"
+            f"\U0001f4b0 체결가: ${price:.3f}\n"
+            f"\U0001f4b5 투자금: ${cost:.2f}\n"
+            f"\U0001f3af 확신도: {confidence:.0%}"
         )
 
     def notify_settlement(self, result: str, market_title: str, side: str,
                           entry: float, exit_price: float, pnl: float, reason: str):
-        emoji = {"WIN": "\U00002705", "LOSS": "\U0000274c", "VOID": "\U0001f504"}.get(result, "")
-        pnl_sign = "+" if pnl >= 0 else ""
+        if result == "WIN":
+            header = "\U0001f4b0 <b>[WIN] 정산 완료</b>"
+            pnl_line = f"\U0001f3c6 수익: ${pnl:+.2f}"
+        elif result == "LOSS":
+            header = "\U0001f6d1 <b>[LOSS] 정산 완료</b>"
+            pnl_line = f"\U0001f4c9 손실: ${pnl:+.2f}"
+        else:
+            header = "\U0001f504 <b>[VOID] 정산 완료</b>"
+            pnl_line = f"\U0001f4b2 PnL: ${pnl:+.2f}"
         self.send(
-            f"{emoji} <b>{result}</b> ({reason})\n\n"
-            f"<b>Market:</b> {self._esc(market_title[:80])}\n"
-            f"<b>Side:</b> {side} | Entry: {entry:.2f} → Exit: {exit_price:.2f}\n"
-            f"<b>PnL:</b> {pnl_sign}${pnl:.2f}"
+            f"{header}\n"
+            f"\U0001f4c4 마켓: {self._esc(market_title[:80])}\n"
+            f"{pnl_line}"
         )
 
     def notify_error(self, msg: str):

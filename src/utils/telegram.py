@@ -48,42 +48,35 @@ class TelegramNotifier:
     def notify_signal(self, market_title: str, side: str, entry_price: float,
                       confidence: float, reasoning: str, edge: float = 0,
                       ai_target: float = 0):
-        """Paper trade signal notification — 간결한 Result 형식."""
-        side_emoji = "\U0001f7e2" if side.upper() == "YES" else "\U0001f534"
-        # AI fair value 기반 목표가 계산
-        if ai_target > 0:
-            fair_value = ai_target if side.upper() == "YES" else (1.0 - ai_target)
-            target_price = entry_price + 0.60 * max(0, fair_value - entry_price)
-            target_str = f"{target_price:.2f} ({target_price*100:.0f}%)"
-        else:
-            target_str = "-"
-        # Reasoning 첫 문장만 추출 (마침표/줄바꿈 기준)
-        short_reason = reasoning.split(".")[0].split("\n")[0].strip()[:120] if reasoning else "-"
+        """Paper trade signal notification — 폴리마켓 동기화 형식."""
         self.send(
-            f"{side_emoji} <b>BUY {side.upper()}</b>\n"
-            f"\n"
-            f"<b>Market:</b> {self._esc(market_title[:100])}\n"
-            f"<b>Entry:</b> {entry_price:.2f} | <b>Target:</b> {target_str}\n"
-            f"<b>Confidence:</b> {confidence:.0%} | <b>Edge:</b> {edge:+.1%}\n"
-            f"<b>Result:</b> {self._esc(short_reason)}\n"
+            f"\U0001f916 <b>[OPEN] AI 앙상블</b>\n"
+            f"\U0001f4c4 마켓: {self._esc(market_title[:100])}\n"
+            f"\U0001f48e 방향: {side.upper()}\n"
+            f"\U0001f4b0 체결가: ${entry_price:.3f}\n"
+            f"\U0001f3af 확신도: {confidence:.0%}\n"
             f"\n"
             f"\U0001f4dd <i>Paper Trade</i>"
         )
 
     def notify_settlement(self, market_title: str, side: str, entry_price: float,
                           exit_price: float, pnl: float, result: str):
-        """Trade settlement notification."""
-        emoji = "\U00002705" if result == "WIN" else "\U0000274c"  # checkmark/cross
-        pnl_sign = "+" if pnl >= 0 else ""
+        """Trade settlement notification — 폴리마켓 동기화 형식."""
+        if result == "WIN":
+            header = "\U0001f4b0 <b>[WIN] 정산 완료</b>"
+            pnl_line = f"\U0001f3c6 수익: ${pnl:+.2f}"
+        elif result == "LOSS":
+            header = "\U0001f6d1 <b>[LOSS] 정산 완료</b>"
+            pnl_line = f"\U0001f4c9 손실: ${pnl:+.2f}"
+        else:
+            header = "\U0001f504 <b>[VOID] 정산 완료</b>"
+            pnl_line = f"\U0001f4b2 PnL: ${pnl:+.2f}"
         self.send(
-            f"{emoji} <b>Settled: {result}</b>\n"
+            f"{header}\n"
+            f"\U0001f4c4 마켓: {self._esc(market_title[:100])}\n"
+            f"{pnl_line}\n"
             f"\n"
-            f"<b>Market:</b> {self._esc(market_title[:100])}\n"
-            f"<b>Side:</b> {side}\n"
-            f"<b>Entry:</b> {entry_price:.2f} -> <b>Exit:</b> {exit_price:.2f}\n"
-            f"<b>PnL:</b> {pnl_sign}${pnl:.2f}\n"
-            f"\n"
-            f"\U0001f3c1 <i>Predict.fun AI Bot</i>"
+            f"\U0001f4dd <i>Paper Trade</i>"
         )
 
     def notify_skip(self, market_title: str, reason: str):
