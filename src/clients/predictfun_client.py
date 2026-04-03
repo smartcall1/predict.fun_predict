@@ -286,17 +286,17 @@ class PredictFunClient(TradingLoggerMixin):
                 result = []
                 for lv in levels:
                     if isinstance(lv, (list, tuple)) and len(lv) >= 2:
-                        price_wei = int(float(lv[0]) * WEI)
-                        size_wei = int(float(lv[1]) * WEI)
+                        price = float(lv[0])
+                        size = float(lv[1])
                     elif isinstance(lv, dict):
                         p = lv.get("price") or lv.get("p") or 0
                         s = lv.get("size") or lv.get("quantity") or lv.get("amount") or 0
-                        price_wei = int(float(p) * WEI)
-                        size_wei = int(float(s) * WEI)
+                        price = float(p)
+                        size = float(s)
                     else:
                         continue
-                    if price_wei > 0 and size_wei > 0:
-                        result.append(DepthLevel((price_wei, size_wei)))
+                    if price > 0 and size > 0:
+                        result.append(DepthLevel((price, size)))
                 return result
 
             asks = parse_levels(ob.get("asks", []))
