@@ -376,7 +376,7 @@ class PredictFunClient(TradingLoggerMixin):
         if settings.trading.paper_trading_mode or not self._builder:
             return
         try:
-            result = self._builder.set_approvals()
+            result = await self._builder.set_approvals_async()
             self.logger.info(f"Approvals set: {result}")
         except Exception as e:
             self.logger.warning(f"ensure_approvals failed: {e}")
