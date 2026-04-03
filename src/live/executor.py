@@ -103,6 +103,7 @@ class LiveExecutor:
         if not self.paper_mode:
             try:
                 pos_resp = await self.client.get_positions()
+                found = False
                 for p in pos_resp.get("positions", []):
                     m = p.get("market", {})
                     o = p.get("outcome", {})
@@ -117,7 +118,12 @@ class LiveExecutor:
                             elif on_chain == 0:
                                 logger.warning(f"No on-chain balance for {market_id} {side}")
                                 return None
+                            found = True
                             break
+                if not found:
+                    logger.warning(f"Position not found on-chain: {market_id} {side} → removing from state")
+                    return {"order_id": f"phantom_{market_id}", "market_id": market_id,
+                            "side": side, "quantity": 0, "exit_price": 0, "phantom": True}
             except Exception as e:
                 logger.warning(f"On-chain balance check failed: {e}")
 
