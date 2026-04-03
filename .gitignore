@@ -2,6 +2,12 @@
 .omc/
 .claude/
 
+# Decision logs (large data files)
+data/decisions_*.jsonl
+
+# Local dashboard
+docs/paper_dashboard_local.html
+
 # Environment variables and secrets
 .env
 .env.local
