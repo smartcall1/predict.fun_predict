@@ -247,8 +247,9 @@ class LiveTrader:
             self.state.init_bankroll(settings.trading.initial_bankroll)
         logger.info(f"Bankroll: ${self.state.bankroll:.2f}")
 
-        # Live mode: ensure on-chain approvals
+        # Live mode: JWT auth + on-chain approvals
         if self.live_mode:
+            await self.client._authenticate()
             await self.client.ensure_approvals()
 
         # Start Telegram polling

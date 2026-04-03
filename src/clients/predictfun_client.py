@@ -765,12 +765,19 @@ class PredictFunClient(TradingLoggerMixin):
             if strategy == "MARKET":
                 payload["data"]["slippageBps"] = str(slippage_bps)
 
-            response = await self.client.post(
-                f"{self.base_url}/v1/orders",
-                json=payload,
-                timeout=15.0,
-            )
-            response.raise_for_status()
+            # 401 → JWT 재인증 후 재시도 (1회)
+            for _attempt in range(2):
+                response = await self.client.post(
+                    f"{self.base_url}/v1/orders",
+                    json=payload,
+                    timeout=15.0,
+                )
+                if response.status_code == 401 and _attempt == 0:
+                    self.logger.info("POST /v1/orders 401 → JWT 재인증...")
+                    if await self._authenticate():
+                        continue
+                response.raise_for_status()
+                break
             result = response.json()
             self.logger.info(f"[LIVE] Order response: {result}")
         except Exception as e:
