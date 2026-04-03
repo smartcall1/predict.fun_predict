@@ -315,22 +315,25 @@ class PredictFunClient(TradingLoggerMixin):
     # ── Portfolio ─────────────────────────────────
 
     async def get_balance(self) -> Dict[str, Any]:
-        """Get account balance. Live mode: on-chain USDT balance via SDK/web3."""
+        """Get account balance. Live mode: on-chain USDT balance at deposit address."""
         if settings.trading.paper_trading_mode:
             return {"balance": settings.trading.initial_bankroll}
 
-        # Live: SDK balance_of_async → web3 fallback
+        # deposit_address (smart account) → 실제 USDT 보유 주소
+        balance_address = settings.api.deposit_address or settings.api.wallet_address
+
+        # SDK balance_of_async
         if self._builder and _SDK_AVAILABLE:
             try:
                 bal_wei = await self._builder.balance_of_async(
                     token="USDT",
-                    address=settings.api.wallet_address,
+                    address=balance_address,
                 )
-                self.logger.info(f"balance_of_async raw: {bal_wei}")
                 return {"balance": _wei_to_usdt(bal_wei)}
             except Exception as e:
                 self.logger.warning(f"balance_of_async failed: {e}")
 
+        # web3 fallback
         if self._w3:
             try:
                 abi = [{"inputs": [{"name": "account", "type": "address"}],
@@ -341,7 +344,7 @@ class PredictFunClient(TradingLoggerMixin):
                     abi=abi,
                 )
                 bal_wei = contract.functions.balanceOf(
-                    Web3.to_checksum_address(settings.api.wallet_address)
+                    Web3.to_checksum_address(balance_address)
                 ).call()
                 return {"balance": _wei_to_usdt(bal_wei)}
             except Exception as e:

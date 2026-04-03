@@ -24,6 +24,7 @@ class APIConfig:
     # BNB Chain (LIVE 전용)
     private_key: str = field(default_factory=lambda: os.getenv("PRIVATE_KEY", ""))
     wallet_address: str = field(default_factory=lambda: os.getenv("WALLET_ADDRESS", ""))
+    deposit_address: str = field(default_factory=lambda: os.getenv("DEPOSIT_ADDRESS", ""))
     bsc_rpc_url: str = field(default_factory=lambda: os.getenv("BSC_RPC_URL", "https://bsc-dataseed1.binance.org"))
 
     # Gemini (단일 모델)
