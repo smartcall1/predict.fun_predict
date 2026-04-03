@@ -120,12 +120,10 @@ class PredictRedeemer:
         r.raise_for_status()
         return r.json()
 
-    def get_usdt_balance(self) -> float:
+    async def get_usdt_balance(self) -> float:
         """온체인 USDT 잔고 조회 (deposit address)."""
         try:
-            bal_wei = asyncio.get_event_loop().run_until_complete(
-                self._builder.balance_of_async(token="USDT", address=self._deposit_addr)
-            )
+            bal_wei = await self._builder.balance_of_async(token="USDT", address=self._deposit_addr)
             return bal_wei / 10**18
         except Exception:
             return 0.0
@@ -212,7 +210,7 @@ class PredictRedeemer:
 
     async def redeem_all(self) -> dict:
         """전체 리딤 사이클."""
-        usdt_before = self.get_usdt_balance()
+        usdt_before = await self.get_usdt_balance()
         positions = self.get_resolved_positions()
         logger.info("Resolved positions: %d | USDT: $%.2f", len(positions), usdt_before)
 
@@ -238,7 +236,7 @@ class PredictRedeemer:
             await asyncio.sleep(2)
 
         await asyncio.sleep(5)
-        usdt_after = self.get_usdt_balance()
+        usdt_after = await self.get_usdt_balance()
         gained = usdt_after - usdt_before
 
         logger.info(
