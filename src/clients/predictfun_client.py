@@ -776,6 +776,8 @@ class PredictFunClient(TradingLoggerMixin):
                     self.logger.info("POST /v1/orders 401 → JWT 재인증...")
                     if await self._authenticate():
                         continue
+                if response.status_code >= 400:
+                    self.logger.error(f"[LIVE] Order error {response.status_code}: {response.text[:300]}")
                 response.raise_for_status()
                 break
             result = response.json()
