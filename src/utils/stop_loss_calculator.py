@@ -103,8 +103,8 @@ class StopLossCalculator:
         take_profit_price = max(0.01, min(0.99, take_profit_price))
         
         # Calculate maximum hold time based on time to expiry
-        # Hold for maximum 50% of time to expiry, or 72 hours, whichever is less
-        max_hold_hours = min(72, time_to_expiry_days * 24 * 0.5)
+        # Hold for maximum 50% of time to expiry, or 7 days, whichever is less
+        max_hold_hours = min(168, time_to_expiry_days * 24 * 0.5)
         max_hold_hours = max(6, max_hold_hours)  # Minimum 6 hours
         
         return {
