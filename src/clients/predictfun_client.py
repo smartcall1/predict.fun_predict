@@ -318,10 +318,19 @@ class PredictFunClient(TradingLoggerMixin):
         if best_ask is None and best_bid is None:
             return None
 
+        # NO 가격 = YES 오더북의 보수 (공식 문서: dev.predict.fun/doc-685654)
+        # NO 매수가(no_ask) = 1 - YES best_bid  (YES bids → NO asks)
+        # NO 매도가(no_bid) = 1 - YES best_ask  (YES asks → NO bids)
+        no_ask = round(1.0 - best_bid, 4) if best_bid is not None else None
+        no_bid = round(1.0 - best_ask, 4) if best_ask is not None else None
+
         return {
             "yes_ask": best_ask,
             "yes_bid": best_bid,
+            "no_ask": no_ask,     # NO 매수가 (= 1 - YES bid)
+            "no_bid": no_bid,     # NO 매도가 (= 1 - YES ask)
             "spread": round((best_ask or 0) - (best_bid or 0), 4) if best_ask and best_bid else None,
+            "no_spread": round(no_ask - no_bid, 4) if no_ask is not None and no_bid is not None else None,
             "mid": round(((best_ask or 0) + (best_bid or 0)) / 2, 4) if best_ask and best_bid else (best_ask or best_bid),
         }
 

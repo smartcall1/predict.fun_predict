@@ -374,10 +374,19 @@ async def make_decision_for_market(
                 mid = prices.get("mid")
                 spread = prices.get("spread")
 
-                # ── BUG FIX: ask 기반 가격 사용 (mid는 광폭 스프레드에서 왜곡됨) ──
-                # 기존: mid 사용 → bid=0.10, ask=0.998일 때 mid=0.55로 왜곡
-                # 수정: yes_ask 기준 (실제 매수 가능 가격)
-                if yes_ask:
+                # ── 근본 수정: YES/NO 각각 실제 매수가 사용 ──
+                # 공식 문서 (dev.predict.fun/doc-685654):
+                #   오더북은 YES 기준. NO는 보수로 유도.
+                #   YES 매수가 = yes_ask
+                #   NO  매수가 = 1 - yes_bid (= no_ask)
+                no_ask = prices.get("no_ask")    # 1 - yes_bid
+                no_bid = prices.get("no_bid")    # 1 - yes_ask
+
+                if yes_ask and no_ask:
+                    yes_price = yes_ask       # YES를 사려면 이 가격
+                    no_price = no_ask         # NO를 사려면 이 가격
+                    has_orderbook = True
+                elif yes_ask:
                     yes_price = yes_ask
                     no_price = round(1.0 - yes_ask, 4)
                     has_orderbook = True
@@ -388,8 +397,9 @@ async def make_decision_for_market(
 
                 logger.info(
                     f"Orderbook for {market.market_id}: "
-                    f"bid={yes_bid} ask={yes_ask} mid={mid} spread={spread} "
-                    f"→ YES={yes_price:.4f} NO={no_price:.4f}"
+                    f"YES bid={yes_bid} ask={yes_ask} | "
+                    f"NO ask={no_ask} bid={no_bid} | spread={spread} "
+                    f"→ YES_buy={yes_price:.4f} NO_buy={no_price:.4f}"
                 )
         except Exception as e:
             logger.debug(f"Orderbook fetch failed for {market.market_id}: {e}")
@@ -399,19 +409,7 @@ async def make_decision_for_market(
             logger.info(f"No orderbook data for {market.market_id}, skipping.")
             return None
 
-        # ── BUG FIX: 스프레드 필터 — 광폭 스프레드 마켓 차단 ──
-        if prices and prices.get("spread") is not None:
-            _spread = prices["spread"]
-            _ask = prices.get("yes_ask") or 1.0
-            spread_pct = _spread / _ask if _ask > 0 else 1.0
-            if spread_pct > 0.15:
-                logger.info(
-                    f"⚠️ WIDE SPREAD: {market.market_id} spread={_spread:.3f} "
-                    f"({spread_pct:.0%}) > 15%, skipping."
-                )
-                return None
-
-        # ── BUG FIX: bid 없는 마켓 차단 (청산 불가) ──
+        # ── bid 없는 마켓 차단 (청산 불가) ──
         if prices and prices.get("yes_bid") is None:
             logger.info(f"⚠️ NO BID: {market.market_id} — 청산 불가 마켓, skipping.")
             return None
@@ -420,7 +418,10 @@ async def make_decision_for_market(
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
         if yes_price > 0.90 or yes_price < 0.10:
-            logger.info(f"No-edge price for {market.market_id} (YES={yes_price}, NO={1-yes_price:.2f}), skipping AI analysis.")
+            logger.info(f"No-edge price for {market.market_id} (YES_buy={yes_price}), skipping AI analysis.")
+            return None
+        if no_price > 0.90 or no_price < 0.10:
+            logger.info(f"No-edge price for {market.market_id} (NO_buy={no_price}), skipping AI analysis.")
             return None
         # Skip near-expiry low-liquidity markets (< 24h + volume < $5000)
         hours_to_expiry = (market.expiration_ts - time.time()) / 3600 if market.expiration_ts else 999

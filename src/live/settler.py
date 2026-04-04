@@ -58,10 +58,10 @@ class PositionSettler:
         resolution = mkt.get("resolution")
         status = str(mkt.get("status", "")).upper()
 
-        # Get current price (exit 기준)
-        # BUG FIX: NO 포지션은 1-yes_ask 대신 1-mid 사용
-        # 이유: 광폭 스프레드 마켓에서 yes_ask=0.998이면 1-ask=0.002로 즉시 전손 판정
-        #       실제 NO 가격은 독립적으로 형성되므로 mid가 더 안정적
+        # Get current price (exit 기준 = 지금 팔면 받을 수 있는 가격)
+        # 공식 문서: YES 매도가 = yes_bid, NO 매도가 = 1 - yes_ask (= no_bid)
+        # 스프레드 필터(decide.py)가 광폭 스프레드 마켓을 선행 차단하므로
+        # settler까지 도달하는 마켓은 합리적 스프레드 보장됨
         current_price = entry_price
         try:
             prices = await self.client.get_best_prices(market_id)
@@ -69,12 +69,14 @@ class PositionSettler:
                 if side == "YES":
                     current_price = prices.get("yes_bid") or prices.get("mid") or entry_price
                 else:
-                    mid = prices.get("mid")
-                    yes_bid = prices.get("yes_bid")
-                    if mid:
-                        current_price = max(1.0 - mid, 0.001)
-                    elif yes_bid:
-                        current_price = max(1.0 - yes_bid, 0.001)
+                    no_bid = prices.get("no_bid")  # = 1 - yes_ask
+                    if no_bid is not None:
+                        current_price = max(no_bid, 0.001)
+                    else:
+                        # fallback: mid 기반
+                        mid = prices.get("mid")
+                        if mid:
+                            current_price = max(1.0 - mid, 0.001)
                     # fallback: entry_price 유지
         except Exception:
             pass
