@@ -193,6 +193,27 @@ class StateManager:
         except Exception:
             return []
 
+    def get_loss_market_ids(self) -> set:
+        """손실 청산된 market_id 집합 반환 (재진입 차단용)."""
+        loss_ids = set()
+        if not os.path.exists(self.trade_log_file):
+            return loss_ids
+        try:
+            with open(self.trade_log_file, "r", encoding="utf-8") as f:
+                for line in f:
+                    try:
+                        t = json.loads(line.strip())
+                        result = t.get("result", "")
+                        if result in ("LOSS", "SELL") and t.get("pnl", 0) < 0:
+                            mid = t.get("market_id", "")
+                            if mid:
+                                loss_ids.add(str(mid))
+                    except Exception:
+                        continue
+        except Exception:
+            pass
+        return loss_ids
+
     # ── Summary ─────────────────────────────────
 
     def summary(self) -> str:

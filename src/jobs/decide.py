@@ -369,15 +369,28 @@ async def make_decision_for_market(
         try:
             prices = await kalshi_client.get_best_prices(market.market_id)
             if prices:
-                if prices.get("mid"):
-                    yes_price = prices["mid"]
-                    no_price = round(1.0 - yes_price, 4)
+                yes_ask = prices.get("yes_ask")
+                yes_bid = prices.get("yes_bid")
+                mid = prices.get("mid")
+                spread = prices.get("spread")
+
+                # ── BUG FIX: ask 기반 가격 사용 (mid는 광폭 스프레드에서 왜곡됨) ──
+                # 기존: mid 사용 → bid=0.10, ask=0.998일 때 mid=0.55로 왜곡
+                # 수정: yes_ask 기준 (실제 매수 가능 가격)
+                if yes_ask:
+                    yes_price = yes_ask
+                    no_price = round(1.0 - yes_ask, 4)
                     has_orderbook = True
-                elif prices.get("yes_ask"):
-                    yes_price = prices["yes_ask"]
-                    no_price = round(1.0 - yes_price, 4)
+                elif mid:
+                    yes_price = mid
+                    no_price = round(1.0 - mid, 4)
                     has_orderbook = True
-                logger.info(f"Orderbook price for {market.market_id}: YES={yes_price:.2f} NO={no_price:.2f}")
+
+                logger.info(
+                    f"Orderbook for {market.market_id}: "
+                    f"bid={yes_bid} ask={yes_ask} mid={mid} spread={spread} "
+                    f"→ YES={yes_price:.4f} NO={no_price:.4f}"
+                )
         except Exception as e:
             logger.debug(f"Orderbook fetch failed for {market.market_id}: {e}")
 
@@ -385,6 +398,24 @@ async def make_decision_for_market(
         if not has_orderbook:
             logger.info(f"No orderbook data for {market.market_id}, skipping.")
             return None
+
+        # ── BUG FIX: 스프레드 필터 — 광폭 스프레드 마켓 차단 ──
+        if prices and prices.get("spread") is not None:
+            _spread = prices["spread"]
+            _ask = prices.get("yes_ask") or 1.0
+            spread_pct = _spread / _ask if _ask > 0 else 1.0
+            if spread_pct > 0.15:
+                logger.info(
+                    f"⚠️ WIDE SPREAD: {market.market_id} spread={_spread:.3f} "
+                    f"({spread_pct:.0%}) > 15%, skipping."
+                )
+                return None
+
+        # ── BUG FIX: bid 없는 마켓 차단 (청산 불가) ──
+        if prices and prices.get("yes_bid") is None:
+            logger.info(f"⚠️ NO BID: {market.market_id} — 청산 불가 마켓, skipping.")
+            return None
+
         if yes_price < 0.02 or no_price < 0.02:
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None

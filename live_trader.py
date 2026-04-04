@@ -320,6 +320,8 @@ class LiveTrader:
         logger.info(f"{len(markets)} markets to analyze")
 
         trades_made = 0
+        # BUG FIX: 손실 마켓 블랙리스트 — 루프 외부에서 1회만 로드
+        loss_markets = self.state.get_loss_market_ids()
         for i, market in enumerate(markets):
             if not self._running:
                 break
@@ -330,6 +332,11 @@ class LiveTrader:
                 # Skip if already have position in this market
                 existing_tids = [p.get("market_id") for p in self.state.positions.values()]
                 if market.market_id in existing_tids:
+                    continue
+
+                # BUG FIX: 손실 마켓 재진입 차단
+                if market.market_id in loss_markets:
+                    logger.info(f"🚫 LOSS BLACKLIST: {market.market_id} — 이전 손실 이력, 재진입 차단")
                     continue
 
                 position = await make_decision_for_market(

@@ -50,7 +50,7 @@ class TradingConfig:
     max_time_to_expiry_days: int = 30       # 최대 만기일
 
     # AI decision thresholds
-    min_confidence_to_trade: float = 0.60   # 최소 AI 확신도
+    min_confidence_to_trade: float = 0.70   # 최소 AI 확신도 (0.60→0.70 상향)
     min_edge: float = 0.05                  # 최소 엣지 (AI확률 - 마켓가격)
     scan_interval_seconds: int = 300        # 스캔 간격 (5분)
 
