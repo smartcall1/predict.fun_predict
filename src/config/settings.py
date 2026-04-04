@@ -47,7 +47,7 @@ class TradingConfig:
 
     # Market filtering
     min_volume: float = 500.0               # USD 기준 (stats endpoint에서 volumeTotalUsd 조회)
-    max_time_to_expiry_days: int = 30       # 최대 만기일
+    max_time_to_expiry_days: int = 365      # 72h 내 청산이므로 장기 마켓도 허용
 
     # AI decision thresholds
     min_confidence_to_trade: float = 0.70   # 최소 AI 확신도 (0.60→0.70 상향)
