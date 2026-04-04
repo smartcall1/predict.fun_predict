@@ -24,10 +24,10 @@ class StopLossCalculator:
     in the performance analysis.
     """
     
-    # Grok4 recommended parameters
-    MIN_STOP_LOSS_PCT = 0.05    # 5% minimum stop-loss
-    MAX_STOP_LOSS_PCT = 0.10    # 10% maximum stop-loss  
-    DEFAULT_STOP_LOSS_PCT = 0.07 # 7% default stop-loss
+    # Predict.fun 스프레드(3~5%) 고려하여 상향 (기존 Grok4 기준 5/7/10%)
+    MIN_STOP_LOSS_PCT = 0.15    # 15% minimum stop-loss
+    MAX_STOP_LOSS_PCT = 0.25    # 25% maximum stop-loss
+    DEFAULT_STOP_LOSS_PCT = 0.20 # 20% default stop-loss
     
     # Take-profit targets
     MIN_TAKE_PROFIT_PCT = 0.15   # 15% minimum take-profit
