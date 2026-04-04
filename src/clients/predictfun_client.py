@@ -369,6 +369,31 @@ class PredictFunClient(TradingLoggerMixin):
             self.logger.warning(f"Book conversion failed: {e}")
             return None
 
+    def _build_no_side_book(self, yes_book: Any) -> Optional[Any]:
+        """YES 오더북을 NO 오더북으로 변환 (공식 문서 기반).
+
+        변환 규칙 (dev.predict.fun/doc-685654):
+          YES bids → NO asks (가격 보수: 1 - price)
+          YES asks → NO bids (가격 보수: 1 - price)
+        """
+        if not _SDK_AVAILABLE or not yes_book:
+            return None
+        try:
+            # YES bids → NO asks: 가격 보수, 자연스럽게 오름차순 정렬됨
+            no_asks = [DepthLevel((round(1.0 - lv[0], 6), lv[1])) for lv in yes_book.bids if lv[0] < 1.0]
+            # YES asks → NO bids: 가격 보수, 자연스럽게 내림차순 정렬됨
+            no_bids = [DepthLevel((round(1.0 - lv[0], 6), lv[1])) for lv in yes_book.asks if lv[0] > 0]
+
+            return Book(
+                market_id=yes_book.market_id,
+                update_timestamp_ms=yes_book.update_timestamp_ms,
+                asks=no_asks,
+                bids=no_bids,
+            )
+        except Exception as e:
+            self.logger.warning(f"NO book conversion failed: {e}")
+            return None
+
     # ── Portfolio ─────────────────────────────────
 
     async def get_balance(self) -> Dict[str, Any]:
@@ -678,15 +703,23 @@ class PredictFunClient(TradingLoggerMixin):
         except Exception:
             pass
 
-        # 2. Orderbook → SDK Book
+        # 2. Orderbook → SDK Book (NO 주문 시 YES→NO 변환)
         try:
             ob = await self.get_orderbook(ticker)
         except Exception as e:
             raise PredictFunAPIError(f"Orderbook fetch failed: {e}")
 
-        book = self._build_sdk_book(ticker, ob)
-        if not book:
+        yes_book = self._build_sdk_book(ticker, ob)
+        if not yes_book:
             raise PredictFunAPIError("Failed to build SDK Book from orderbook")
+
+        # NO 주문이면 오더북 변환: YES bids↔asks 스왑 + 가격 보수
+        if is_yes:
+            book = yes_book
+        else:
+            book = self._build_no_side_book(yes_book)
+            if not book:
+                raise PredictFunAPIError("Failed to convert YES book to NO book")
 
         # 3. Calculate order amounts
         slippage_bps = 300  # 3% default
@@ -801,6 +834,10 @@ class PredictFunClient(TradingLoggerMixin):
         )
         status = result.get("status", "matched")
 
+        # SDK가 계산한 실제 price_per_share 사용 (입력 price 대신)
+        sdk_price = amounts.price_per_share / WEI if amounts.price_per_share else price
+        actual_price = round(sdk_price, 6) if sdk_price > 0 else price
+
         return {
             "order": {
                 "order_id": order_id,
@@ -808,11 +845,11 @@ class PredictFunClient(TradingLoggerMixin):
                 "side": side,
                 "action": action,
                 "count": count,
-                "price": price,
+                "price": actual_price,
                 "status": status,
                 "paper": False,
-                "trade_value": round(size_usdt, 4),
-                "fee": round(size_usdt * fee_rate_bps / 10_000, 4),
+                "trade_value": round(count * actual_price, 4),
+                "fee": round(count * actual_price * fee_rate_bps / 10_000, 4),
                 "gas_fee": 0.10,
             }
         }
