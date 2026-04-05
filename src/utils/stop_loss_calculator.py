@@ -102,10 +102,9 @@ class StopLossCalculator:
         stop_loss_price = max(0.01, min(0.99, stop_loss_price))
         take_profit_price = max(0.01, min(0.99, take_profit_price))
         
-        # Calculate maximum hold time based on time to expiry
-        # Hold for maximum 50% of time to expiry, or 7 days, whichever is less
-        max_hold_hours = min(168, time_to_expiry_days * 24 * 0.5)
-        max_hold_hours = max(6, max_hold_hours)  # Minimum 6 hours
+        # 만기 30일 이내 마켓만 진입 → 최대 30일 보유 (SL/TP 우선 작동)
+        max_hold_hours = min(720, time_to_expiry_days * 24 * 0.8)
+        max_hold_hours = max(24, max_hold_hours)  # Minimum 24 hours
         
         return {
             'stop_loss_price': round(stop_loss_price, 2),
