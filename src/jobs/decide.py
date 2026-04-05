@@ -83,10 +83,21 @@ async def _run_ensemble_decision(
         )
 
         # Build completion callables — each role gets its configured model
+        # Cost optimization: skip news_analyst when no real news available
+        _has_real_news = (
+            news_summary
+            and "based on market data only" not in news_summary.lower()
+            and "news search unavailable" not in news_summary.lower()
+            and "no real-time news" not in news_summary.lower()
+            and "search timeout" not in news_summary.lower()
+        )
         completions = {}
         for role in runner.agents:
             if role == "trader":
                 continue  # Trader runs separately in Phase 2
+            if role == "news_analyst" and not _has_real_news:
+                logger.info("Skipping news_analyst — no real news available (cost saving)")
+                continue
             role_model = agent_models.get(role, settings.api.gemini_model)
 
             async def _make_fn(prompt, _model=role_model, _role=role):
