@@ -414,6 +414,17 @@ async def make_decision_for_market(
             logger.info(f"⚠️ NO BID: {market.market_id} — 청산 불가 마켓, skipping.")
             return None
 
+        # ── 극단 스프레드 차단 (>40%) — 진입 즉시 SL 발동 방지 ──
+        if prices and prices.get("yes_bid") and prices.get("yes_ask"):
+            _bid = prices["yes_bid"]
+            _ask = prices["yes_ask"]
+            if _ask > 0 and (_ask - _bid) / _ask > 0.40:
+                logger.info(
+                    f"⚠️ EXTREME SPREAD: {market.market_id} "
+                    f"bid={_bid:.3f} ask={_ask:.3f} ({(_ask-_bid)/_ask:.0%}) > 40%, skipping."
+                )
+                return None
+
         if yes_price < 0.02 or no_price < 0.02:
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
