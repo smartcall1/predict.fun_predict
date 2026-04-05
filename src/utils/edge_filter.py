@@ -34,15 +34,15 @@ class EdgeFilter:
     UPDATED: More aggressive thresholds to allow more trading opportunities.
     """
     
-    # DECREASED: More permissive edge requirements for more trades
-    MIN_EDGE_REQUIREMENT = 0.08        # DECREASED: 8% minimum edge (was 15%)
-    HIGH_CONFIDENCE_EDGE = 0.06        # DECREASED: 6% edge for high confidence (was 12%)  
-    MEDIUM_CONFIDENCE_EDGE = 0.08      # DECREASED: 8% edge for medium confidence (was 15%)
-    LOW_CONFIDENCE_EDGE = 0.12         # DECREASED: 12% edge for low confidence (was 20%)
-    
-    # DECREASED: More permissive filters for more opportunities
-    MIN_CONFIDENCE_FOR_TRADE = 0.50    # DECREASED: 50% minimum confidence (was 65%)
-    MAX_ACCEPTABLE_RISK = 0.6          # INCREASED: 60% max position risk (was 50%)
+    # Edge thresholds — must exceed Predict.fun spread (3-5%) + slippage
+    MIN_EDGE_REQUIREMENT = 0.12        # 12% minimum edge (covers spread + margin)
+    HIGH_CONFIDENCE_EDGE = 0.10        # 10% edge for high confidence (≥80%)
+    MEDIUM_CONFIDENCE_EDGE = 0.12      # 12% edge for medium confidence (60-79%)
+    LOW_CONFIDENCE_EDGE = 0.18         # 18% edge for low confidence (<60%)
+
+    # Confidence and risk gates
+    MIN_CONFIDENCE_FOR_TRADE = 0.60    # 60% minimum confidence
+    MAX_ACCEPTABLE_RISK = 0.5          # 50% max position risk
     
     # UPDATED: More permissive quality filters
     MIN_VOLUME_FOR_HIGH_EDGE = 500     # DECREASED: Lower volume requirement (was 2000, now 500)

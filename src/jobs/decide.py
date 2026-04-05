@@ -204,6 +204,8 @@ async def _run_ensemble_decision(
                 f"Trader CONFIRMED: {action} {trader_result.get('side')} "
                 f"confidence={trader_result.get('confidence'):.2f}"
             )
+            # Attach ensemble probability so edge filter can use it (not confidence)
+            trader_result["ensemble_probability"] = probability
             return trader_result
 
         logger.info(f"Trader REJECTED ensemble suggestion (action={action}). SKIP.")
@@ -428,16 +430,35 @@ async def make_decision_for_market(
         if yes_price < 0.02 or no_price < 0.02:
             logger.info(f"Dust price for {market.market_id} (YES={yes_price}, NO={no_price}), skipping.")
             return None
-        if yes_price > 0.90 or yes_price < 0.10:
+        if yes_price > 0.85 or yes_price < 0.15:
             logger.info(f"No-edge price for {market.market_id} (YES_buy={yes_price}), skipping AI analysis.")
             return None
-        if no_price > 0.90 or no_price < 0.10:
+        if no_price > 0.85 or no_price < 0.15:
             logger.info(f"No-edge price for {market.market_id} (NO_buy={no_price}), skipping AI analysis.")
             return None
         # Skip near-expiry low-liquidity markets (< 24h + volume < $5000)
         hours_to_expiry = (market.expiration_ts - time.time()) / 3600 if market.expiration_ts else 999
         if hours_to_expiry < 24 and market.volume < 5000:
             logger.info(f"Near-expiry low-liquidity for {market.market_id} ({hours_to_expiry:.0f}h, vol=${market.volume}), skipping.")
+            return None
+
+        # ── Filter: 스포츠 마켓 완전 차단 (AI 분석 전 — 비용 절감) ──
+        import re
+        _SPORTS_KW = re.compile(
+            r'\b(Nba|Nfl|Nhl|Mlb|Mls|Lol|Csgo|Cs2|Dota|Valorant|Atp|Wta|Ufc|'
+            r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl|'
+            r'Match Winner|Nhl\s|Mlb\s)\b',
+            re.IGNORECASE,
+        )
+        _title = market.title or ""
+        if _SPORTS_KW.search(_title):
+            logger.info(
+                f"⚽ SPORTS BLOCK: {market.market_id} '{_title[:50]}' — sports market rejected (pre-analysis)."
+            )
+            await db_manager.record_market_analysis(
+                market.market_id, "SPORTS_BLOCKED", 0.0, 0.0,
+                "sports_category_excluded"
+            )
             return None
 
         market_data = {
@@ -510,6 +531,8 @@ async def make_decision_for_market(
                 )
                 # Attach reasoning for rationale
                 decision.reasoning = ensemble_result.get("reasoning", "Multi-agent ensemble decision")
+                # Preserve ensemble probability for edge filter (NOT confidence)
+                decision.ensemble_probability = ensemble_result.get("ensemble_probability")
                 # Ensemble cost tracked via actual API responses
             else:
                 logger.info("Ensemble returned no decision (SKIP). Respecting ensemble verdict.")
@@ -545,12 +568,12 @@ async def make_decision_for_market(
 
         # Decision log (에이전트별 의견 + 최종 결정 JSONL)
         # Edge = AI확률(side 기준) - 시장가격(side 기준)
-        # YES: edge = confidence - yes_price
-        # NO:  edge = (1-confidence) - (1-yes_price) = yes_price - confidence
-        if decision.side.upper() == "YES":
-            edge_val = confidence - yes_price
+        # Use ensemble_probability (true estimate), fallback to confidence for single-model
+        _ens_p = getattr(decision, 'ensemble_probability', None)
+        if _ens_p is not None:
+            edge_val = _ens_p - yes_price if decision.side.upper() == "YES" else yes_price - _ens_p
         else:
-            edge_val = (1.0 - confidence) - no_price
+            edge_val = confidence - yes_price if decision.side.upper() == "YES" else (1.0 - confidence) - no_price
         log_decision(
             market_id=market.market_id,
             market_title=market.title,
@@ -573,31 +596,19 @@ async def make_decision_for_market(
         if decision.action.upper() == "BUY" and decision.confidence >= settings.trading.min_confidence_to_trade:
             price = yes_price if decision.side.upper() == "YES" else no_price
 
-            # ── Filter: 스포츠 마켓 완전 차단 ──
-            import re
-            _SPORTS_KW = re.compile(
-                r'\b(Nba|Nfl|Nhl|Mlb|Mls|Lol|Csgo|Cs2|Dota|Valorant|Atp|Wta|Ufc|'
-                r'Premier League|La Liga|Serie A|Bundesliga|Ncaa[bf]?|Epl|'
-                r'Match Winner|Nhl\s|Mlb\s)\b',
-                re.IGNORECASE,
-            )
-            _title = market.title or ""
-            if _SPORTS_KW.search(_title):
-                logger.info(
-                    f"⚽ SPORTS BLOCK: {market.market_id} '{_title[:50]}' — sports market rejected."
-                )
-                await db_manager.record_market_analysis(
-                    market.market_id, "SPORTS_BLOCKED", confidence, total_analysis_cost,
-                    "sports_category_excluded"
-                )
-                return None
+            # (Sports filter moved to pre-analysis phase — see above)
 
-            # Apply Grok4 edge filtering - 10% minimum edge requirement
+            # Apply edge filtering - minimum edge requirement
             from src.utils.edge_filter import EdgeFilter
-            
-            # Calculate market probabilities and AI confidence
+
+            # Use ensemble probability (true AI estimate), NOT confidence
+            # ensemble_probability is always YES-basis; convert to side-basis
             market_prob = yes_price if decision.side.upper() == "YES" else no_price
-            ai_prob = decision.confidence
+            ens_prob = getattr(decision, 'ensemble_probability', None)
+            if ens_prob is not None:
+                ai_prob = ens_prob if decision.side.upper() == "YES" else (1.0 - ens_prob)
+            else:
+                ai_prob = decision.confidence  # fallback for single-model
             
             # Check edge filter
             should_trade, trade_reason, edge_result = EdgeFilter.should_trade_market(
